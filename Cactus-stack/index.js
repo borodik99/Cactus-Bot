@@ -14,7 +14,7 @@ const WATERING = {
   water: 70,
   waterLabel: '70 мл',
   time: '10:00 (каждую вторую среду)',
-  name: 'Максим',
+  name: 'Макс',
 };
 
 let wateringWeekCounter = 0;
@@ -101,7 +101,7 @@ bot.command('start', async (ctx) => {
   const user = await getUser(chatId);
 
   await ctx.reply(
-    `👋 Привет, *${name}*! Я слежу за поливом кактуса *${WATERING.name}* 🌵\n\n` +
+    `👋 Привет, *${name}*! Я слежу за поливом кактуса *Макса* 🌵\n\n` +
     `📌 Режим полива: каждые *~${WATERING.freq} рабочих дней*\n` +
     `💧 Объём: *${WATERING.waterLabel}*\n` +
     `🕙 Уведомление: *${WATERING.time}*\n\n` +
@@ -138,7 +138,7 @@ bot.callbackQuery('join_queue', async (ctx) => {
 
   await ctx.answerCallbackQuery({ text: '✅ Ты в очереди!' });
   await ctx.editMessageText(
-    `✅ *${user.name}*, ты в очереди по уходу за *${WATERING.name}*!\n` +
+    `✅ *${user.name}*, ты в очереди по уходу за Максом!\n` +
     `📍 Позиция: *${position + 1}* из ${queue.length}`,
     { parse_mode: 'Markdown', reply_markup: mainKeyboard(true) }
   );
@@ -161,7 +161,7 @@ bot.callbackQuery('join_queue', async (ctx) => {
     if (u.chat_id !== chatId) {
       await bot.api.sendMessage(
         u.chat_id,
-        `🌿 *${user.name}* присоединился к уходу за *${WATERING.name}*!\nВсего в очереди: ${queue.length} чел.`,
+        `🌿 *${user.name}* присоединился к уходу за Максом!\nВсего в очереди: ${queue.length} чел.`,
         { parse_mode: 'Markdown' }
       ).catch(() => {});
     }
@@ -219,7 +219,7 @@ bot.callbackQuery('show_queue', async (ctx) => {
   }).join('\n');
 
   await ctx.reply(
-    `📋 *Очередь полива ${WATERING.name}:*\n\n${lines}`,
+    `📋 *Очередь полива Макса:*\n\n${lines}`,
     { parse_mode: 'Markdown' }
   );
 });
@@ -232,7 +232,7 @@ bot.callbackQuery('show_next', async (ctx) => {
 
   if (!nextDate) {
     return ctx.reply(
-      `💧 *${WATERING.name}* ещё не поливали через бота.\n\n` +
+      `💧 Макса ещё не поливали через бота.\n\n` +
       `📌 Режим: каждые *~${WATERING.freq} рабочих дней*\n` +
       `👤 Первым поливает: *${current?.name || 'очередь пуста'}*`,
       { parse_mode: 'Markdown' }
@@ -243,12 +243,12 @@ bot.callbackQuery('show_next', async (ctx) => {
 
   if (daysLeft <= 0) {
     await ctx.reply(
-      `⚠️ *${WATERING.name}* уже пора полить!\n👤 Очередь: *${current?.name || '—'}*`,
+      `⚠️ Макса уже пора полить!\n👤 Очередь: *${current?.name || '—'}*`,
       { parse_mode: 'Markdown' }
     );
   } else {
     await ctx.reply(
-      `📅 Следующий полив *${WATERING.name}*: *${nextDate.toLocaleDateString('ru-RU')}*\n` +
+      `📅 Следующий полив Макса: *${nextDate.toLocaleDateString('ru-RU')}*\n` +
       `⏳ Через: *${daysLeft} дн.*\n` +
       `💧 Польёт: *${current?.name || '—'}* (~${WATERING.waterLabel})`,
       { parse_mode: 'Markdown' }
@@ -268,7 +268,7 @@ bot.callbackQuery('show_history', async (ctx) => {
   );
 
   if (!res.rows.length) {
-    return ctx.reply(`📋 *${WATERING.name}* ещё не поливали. История пуста.`);
+    return ctx.reply(`📋 Макса ещё не поливали. История пуста.`);
   }
 
   const lines = res.rows.map((e, i) => {
@@ -277,7 +277,7 @@ bot.callbackQuery('show_history', async (ctx) => {
   }).join('\n');
 
   await ctx.reply(
-    `💧 *История поливов ${WATERING.name}:*\n\n${lines}`,
+    `💧 *История поливов Макса:*\n\n${lines}`,
     { parse_mode: 'Markdown' }
   );
 });
@@ -305,7 +305,7 @@ bot.callbackQuery('mark_watered', async (ctx) => {
 
   await ctx.answerCallbackQuery({ text: '✅ Отмечено!' });
   await ctx.editMessageText(
-    `✅ *${name}* полил *${WATERING.name}* в ${dateStr} 💧\n\n` +
+    `✅ *${name}* полил Макса в ${dateStr} 💧\n\n` +
     `📅 Следующий полив: *${nextDate?.toLocaleDateString('ru-RU') || '—'}*\n` +
     `👤 Польёт: *${nextUser?.name || '—'}*`,
     { parse_mode: 'Markdown' }
@@ -314,7 +314,7 @@ bot.callbackQuery('mark_watered', async (ctx) => {
   if (nextUser && nextUser.chat_id !== chatId) {
     await bot.api.sendMessage(
       nextUser.chat_id,
-      `🔔 *${name}* только что полил *${WATERING.name}* 💧\n` +
+      `🔔 *${name}* только что полил Макса 💧\n` +
       `Готовься — следующий полив *${nextDate?.toLocaleDateString('ru-RU')}*, твоя очередь, *${nextUser.name}*! 🌵`,
       { parse_mode: 'Markdown' }
     ).catch(() => {});
@@ -342,7 +342,7 @@ bot.command('watered', async (ctx) => {
   const nextDate = await getNextWateringDate();
 
   await ctx.reply(
-    `✅ *${name}* полил *${WATERING.name}* 💧\n` +
+    `✅ *${name}* полил Макса 💧\n` +
     `📅 Следующий полив: *${nextDate?.toLocaleDateString('ru-RU') || '—'}*\n` +
     `👤 Следующий: *${nextUser?.name || '—'}*`,
     { parse_mode: 'Markdown' }
@@ -361,7 +361,7 @@ cron.schedule('0 10 * * 3', async () => {
 
   await bot.api.sendMessage(
     current.chat_id,
-    `🌵 *${current.name}, пора полить ${WATERING.name}!*\n\n` +
+    `🌵 *${current.name}, пора полить Макса!*\n\n` +
     `💧 Объём: ~${WATERING.waterLabel}\n` +
     `Лей медленно по краю горшка 🪴`,
     { parse_mode: 'Markdown', reply_markup: keyboard }
@@ -373,7 +373,7 @@ db.connect()
   .then(() => {
     console.log('✅ Подключение к БД успешно');
     bot.start();
-    console.log(`🌵 Бот запущен! Слежу за ${WATERING.name} 🌵`);
+    console.log(`🌵 Бот запущен! Слежу за Максом 🌵`);
   })
   .catch(err => {
     console.error('❌ Ошибка подключения к БД:', err.message);
