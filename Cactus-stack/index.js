@@ -21,6 +21,23 @@ let wateringWeekCounter = 0;
 
 // --- Вспомогательные функции ---
 
+async function ensureApproved(ctx) {
+  const user = await getUser(ctx.chat.id);
+
+  if (!user){
+    await ctx.reply('Сначала отправь /start');
+    return null;
+  }
+
+  if (!user.approved) {
+    await ctx.reply('Твоя заявка на доступ к боту ещё не одобрена. Подождите, пожалуйста 🌵');
+    return null;
+  }
+
+    return user;
+  }
+
+
 async function getUser(chatId) {
   const res = await db.query('SELECT * FROM users WHERE chat_id = $1', [chatId]);
   return res.rows[0] || null;
@@ -100,6 +117,19 @@ bot.command('start', async (ctx) => {
 
   const user = await getUser(chatId);
 
+  // уведомление админу о новом (или вернувшемся) пользователе
+  const adminId = process.env.ADMIN_CHAT_ID;
+  if (adminId && !user.approved) {
+    await bot.api.sendMessage(
+      adminId,
+      `🆕 Новый пользователь:\n` +
+      `ID: ${chatId}\n` +
+      `Имя: ${name}\n` +
+      `Username: @${username || '—'}\n\n` +
+      `Нужно выдать доступ (approved = true).`
+    );
+  }
+
   await ctx.reply(
     `👋 Привет, *${name}*! Я слежу за поливом кактуса *Макса* 🌵\n\n` +
     `📌 Режим полива: каждые *~${WATERING.freq} рабочих дней*\n` +
@@ -110,18 +140,109 @@ bot.command('start', async (ctx) => {
   );
 });
 
+// /users — список пользователей
+bot.command('users', async (ctx) => {
+  const adminId = Number(process.env.ADMIN_CHAT_ID);
+  if (ctx.chat.id !== adminId) {
+    return ctx.reply('Команда только для админа.');
+  }
+
+  const res = await db.query(
+    `SELECT chat_id, name, username, approved, in_queue, queue_position
+     FROM users
+     ORDER BY approved DESC, in_queue DESC, queue_position NULLS LAST, chat_id ASC
+     LIMIT 50`
+  );
+
+  if (!res.rows.length) {
+    return ctx.reply('Пользователей в базе пока нет.');
+  }
+
+  const lines = res.rows.map((u, i) => {
+    const status =
+      (u.approved ? '✅' : '⛔') +
+      (u.in_queue ? `, очередь #${u.queue_position + 1}` : '');
+    const uname = u.username ? '@' + u.username : '—';
+    return `${i + 1}. ${u.name} (${uname})\n   ID: ${u.chat_id}\n   ${status}`;
+  }).join('\n\n');
+
+  await ctx.reply(
+    `📋 *Пользователи:*\n\n${lines}\n\n` +
+    `Команды:\n` +
+    `• /approve <chat_id> — выдать доступ\n` +
+    `• /revoke <chat_id> — забрать доступ`,
+    { parse_mode: 'Markdown' }
+  );
+});
+
+// /approve <chat_id>
+bot.command('approve', async (ctx) => {
+  const adminId = Number(process.env.ADMIN_CHAT_ID);
+  if (ctx.chat.id !== adminId) {
+    return ctx.reply('Команда только для админа.');
+  }
+
+  const parts = ctx.message.text.split(' ');
+  const targetId = Number(parts[1]);
+  if (!targetId) {
+    return ctx.reply('Используй: /approve <chat_id>');
+  }
+
+  await db.query(
+    'UPDATE users SET approved = TRUE WHERE chat_id = $1',
+    [targetId]
+  );
+
+  await ctx.reply(`Пользователь ${targetId} одобрен.`);
+
+  // по желанию: уведомить пользователя
+  await bot.api.sendMessage(
+    targetId,
+    '✅ Твоя заявка на доступ к боту одобрена! Можешь пользоваться меню и очередью 🌵'
+  ).catch(() => {});
+});
+
+// /revoke <chat_id> — забрать доступ
+bot.command('revoke', async (ctx) => {
+  const adminId = Number(process.env.ADMIN_CHAT_ID);
+  if (ctx.chat.id !== adminId) {
+    return ctx.reply('Команда только для админа.');
+  }
+
+  const parts = ctx.message.text.split(' ');
+  const targetId = Number(parts[1]);
+  if (!targetId) {
+    return ctx.reply('Используй: /revoke <chat_id>');
+  }
+
+  // Забираем доступ и выкидываем из очереди
+  await db.query(
+    'UPDATE users SET approved = FALSE, in_queue = FALSE, queue_position = NULL WHERE chat_id = $1',
+    [targetId]
+  );
+
+  await ctx.reply(`Доступ пользователя ${targetId} отобран, из очереди убран.`);
+
+  // Уведомляем пользователя (если он ещё может получать сообщения)
+  await bot.api.sendMessage(
+    targetId,
+    '⛔ Твой доступ к боту был отозван администратором.'
+  ).catch(() => {});
+});
+
 // --- /menu ---
 bot.command('menu', async (ctx) => {
-  const user = await getUser(ctx.chat.id);
+  const user = await ensureApproved(ctx);
+  if (!user) return;
   await ctx.reply('🌵 Главное меню:', { reply_markup: mainKeyboard(user?.in_queue || false) });
 });
 
 // --- Вступить в очередь ---
 bot.callbackQuery('join_queue', async (ctx) => {
+  const user = await ensureApproved(ctx);
+  if (!user) return;
   const chatId = ctx.chat.id;
-  const user = await getUser(chatId);
 
-  if (!user) return ctx.answerCallbackQuery({ text: 'Сначала отправь /start' });
   if (user.in_queue) return ctx.answerCallbackQuery({ text: 'Ты уже в очереди! 🌿' });
 
   const res = await db.query(
@@ -170,10 +291,17 @@ bot.callbackQuery('join_queue', async (ctx) => {
 
 // --- Выйти из очереди ---
 bot.callbackQuery('leave_queue', async (ctx) => {
-  const chatId = ctx.chat.id;
-  const user = await getUser(chatId);
+  const user = await ensureApproved(ctx);
+  if (!user) {
+    await ctx.answerCallbackQuery();
+    return;
+  }
 
-  if (!user?.in_queue) return ctx.answerCallbackQuery({ text: 'Тебя нет в очереди' });
+  const chatId = ctx.chat.id;
+
+  if (!user.in_queue) {
+    return ctx.answerCallbackQuery({ text: 'Тебя нет в очереди' });
+  }
 
   const leavingPosition = user.queue_position;
 
@@ -200,8 +328,14 @@ bot.callbackQuery('leave_queue', async (ctx) => {
   );
 });
 
+
 // --- Показать очередь ---
 bot.callbackQuery('show_queue', async (ctx) => {
+  const user = await ensureApproved(ctx);
+  if (!user){
+    await ctx.answerCallbackQuery();
+    return;  
+  }
   await ctx.answerCallbackQuery();
   const queue = await getQueue();
 
@@ -226,6 +360,9 @@ bot.callbackQuery('show_queue', async (ctx) => {
 
 // --- Следующий полив ---
 bot.callbackQuery('show_next', async (ctx) => {
+  const user = await ensureApproved(ctx);
+  if (!user) return;
+  
   await ctx.answerCallbackQuery();
   const nextDate = await getNextWateringDate();
   const current = await getCurrentWaterer();
@@ -258,6 +395,12 @@ bot.callbackQuery('show_next', async (ctx) => {
 
 // --- Показать историю ---
 bot.callbackQuery('show_history', async (ctx) => {
+   const user = await ensureApproved(ctx);
+    if (!user){
+      await ctx.answerCallbackQuery();
+      return;
+  }
+ 
   await ctx.answerCallbackQuery();
 
   const res = await db.query(
@@ -284,13 +427,17 @@ bot.callbackQuery('show_history', async (ctx) => {
 
 // --- Кнопка "Полил!" ---
 bot.callbackQuery('mark_watered', async (ctx) => {
+  const user = await ensureApproved(ctx);
+  if (!user){
+    await ctx.answerCallbackQuery();
+    return
+  }
   const chatId = ctx.chat.id;
-  const user = await getUser(chatId);
-  const name = user?.name || ctx.from?.first_name || 'Кто-то';
+  const name = user.name || ctx.from?.first_name || 'Кто-то';
 
   await db.query(
     'INSERT INTO watering_log (user_id, water_ml) VALUES ($1, $2)',
-    [user?.id || null, WATERING.water]
+    [user.id, WATERING.water]
   );
 
   const queue = await getQueue();
@@ -323,13 +470,14 @@ bot.callbackQuery('mark_watered', async (ctx) => {
 
 // --- /watered — отметить полив командой ---
 bot.command('watered', async (ctx) => {
-  const chatId = ctx.chat.id;
-  const user = await getUser(chatId);
-  const name = user?.name || ctx.from?.first_name || 'Кто-то';
+  const user = await ensureApproved(ctx);
+  if (!user) return;
+
+  const name = user.name || ctx.from?.first_name || 'Кто-то';
 
   await db.query(
     'INSERT INTO watering_log (user_id, water_ml) VALUES ($1, $2)',
-    [user?.id || null, WATERING.water]
+    [user.id, WATERING.water]
   );
 
   const queue = await getQueue();
@@ -348,6 +496,33 @@ bot.command('watered', async (ctx) => {
     { parse_mode: 'Markdown' }
   );
 });
+
+// /help — список команд
+bot.command('help', async (ctx) => {
+  const isAdmin = Number(process.env.ADMIN_CHAT_ID) === ctx.chat.id;
+
+  let text =
+    '📝 *Список команд бота:*\n\n' +
+    '/start — начать работу с ботом\n' +
+    '/menu — главное меню\n' +
+    '/watered — отметить, что ты полил Макса\n\n' +
+    'Через кнопки в меню можно:\n' +
+    '• Вступить или выйти из очереди\n' +
+    '• Посмотреть очередь\n' +
+    '• Посмотреть историю поливов\n' +
+    '• Узнать, когда следующий полив\n';
+
+  if (isAdmin) {
+    text +=
+      '\n*Админские команды:*\n' +
+      '/users — список пользователей\n' +
+      '/approve <chat_id> — выдать доступ\n' +
+      '/revoke <chat_id> — забрать доступ\n';
+  }
+
+  await ctx.reply(text, { parse_mode: 'Markdown' });
+});
+
 
 // --- Cron: каждую вторую среду в 10:00 ---
 cron.schedule('0 10 * * 3', async () => {

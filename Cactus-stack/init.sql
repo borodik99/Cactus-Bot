@@ -1,12 +1,13 @@
 -- Пользователи
 CREATE TABLE users (
-    id          SERIAL PRIMARY KEY,
-    chat_id     BIGINT UNIQUE NOT NULL,  -- уникальный ID чата в Telegram
-    name        TEXT NOT NULL,            -- имя пользователя
-    username    TEXT,                     -- @username (может отсутствовать)
-    in_queue    BOOLEAN DEFAULT FALSE,    -- состоит ли в очереди полива
-    queue_position INT,                   -- позиция в очереди
-    created_at  TIMESTAMP DEFAULT NOW()   -- когда зарегистрировался
+    id             SERIAL PRIMARY KEY,
+    chat_id        BIGINT UNIQUE NOT NULL,
+    name           TEXT NOT NULL,
+    username       TEXT,
+    in_queue       BOOLEAN DEFAULT FALSE,
+    queue_position INT,
+    approved       BOOLEAN DEFAULT FALSE, 
+    created_at     TIMESTAMP DEFAULT NOW()
 );
 
 -- История поливов
