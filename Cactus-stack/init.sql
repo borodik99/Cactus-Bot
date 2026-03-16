@@ -7,6 +7,7 @@ CREATE TABLE users (
     in_queue       BOOLEAN DEFAULT FALSE,
     queue_position INT,
     approved       BOOLEAN DEFAULT FALSE, 
+    waiting_skip_reason  BOOLEAN DEFAULT FALSE,
     created_at     TIMESTAMP DEFAULT NOW()
 );
 
