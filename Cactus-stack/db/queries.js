@@ -44,7 +44,7 @@ async function getNextWateringDate() {
   if (day === 6) next.setDate(next.getDate() + 2);
   if (day === 0) next.setDate(next.getDate() + 1);
 
-  next.setHours(10, 0, 0, 0);
+  next.setUTCHours(7, 0, 0, 0); // ✅ 7 UTC = 10:00 Минск
   return next;
 }
 

@@ -138,7 +138,8 @@ function registerCallbacks(bot) {
       );
     }
 
-    const daysLeft = Math.ceil((nextDate - Date.now()) / 86400000);
+   const diffMs = nextDate.getTime() - Date.now();
+const daysLeft = Math.ceil(diffMs / 86400000)
     if (daysLeft <= 0) {
       await ctx.reply(`⚠️ Макса уже пора полить!\n👤 Очередь: *${current?.name || '—'}*`, { parse_mode: 'Markdown' });
     } else {
