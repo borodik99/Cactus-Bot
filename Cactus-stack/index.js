@@ -1,4 +1,5 @@
 require('dotenv').config();
+const { GrammyError, HttpError } = require('grammy'); // ✅ импорт ошибок
 const { bot, db } = require('./bot');
 const { registerCommands } = require('./handlers/commands');
 const { registerCallbacks } = require('./handlers/callbacks');
@@ -6,7 +7,20 @@ const { registerAdminHandlers } = require('./handlers/admin');
 const { startCron } = require('./cron');
 
 bot.catch((err) => {
-  console.error('Ошибка бота:', err.message);
+  const ctx = err.ctx;
+  const e = err.error;
+
+  console.error(`❌ Ошибка при обработке update ${ctx?.update?.update_id}`);
+
+  if (e instanceof GrammyError) {        // ✅ теперь работает
+    console.error('Ошибка Telegram API:', e.description);
+  } else if (e instanceof HttpError) {   // ✅ теперь работает
+    console.error('Нет связи с Telegram:', e);
+  } else {
+    console.error('Неизвестная ошибка:', e);
+  }
+
+  ctx?.reply('⚠️ Что-то пошло не так. Попробуй ещё раз.').catch(() => {});
 });
 
 registerCommands(bot);
