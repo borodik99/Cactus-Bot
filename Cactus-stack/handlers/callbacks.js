@@ -2,8 +2,8 @@ const { InlineKeyboard } = require('grammy');
 const { db } = require('../bot');
 const { WATERING } = require('../constants');
 const { getQueue, getQueueState, setCurrentTurn, getCurrentWaterer, getNextWateringDate, rotateQueue } = require('../db/queries');
-const { mainKeyboard } = require('../keyboards');
 const { ensureApproved } = require('../helpers');
+const { mainKeyboard, backKeyboard } = require('../keyboards');
 
 function registerCallbacks(bot) {
 
@@ -89,7 +89,10 @@ function registerCallbacks(bot) {
     const queue = await getQueue();
 
     if (queue.length === 0) {
-      return ctx.reply(`📋 Очередь пуста.\nНажми «Участвовать в поливе», чтобы ухаживать за *${WATERING.name}*! 🌵`, { parse_mode: 'Markdown' });
+      return ctx.editMessageText(
+        `📋 Очередь пуста.\nНажми «Участвовать в поливе», чтобы ухаживать за *${WATERING.name}*! 🌵`,
+        { parse_mode: 'Markdown', reply_markup: backKeyboard() }
+      );
     }
 
     const state = await getQueueState();
@@ -98,7 +101,10 @@ function registerCallbacks(bot) {
       return `${isCurrent ? '💧' : `${i + 1}.`} ${u.name}${isCurrent ? ' ← сейчас' : ''}`;
     }).join('\n');
 
-    await ctx.reply(`📋 *Очередь полива Макса:*\n\n${lines}`, { parse_mode: 'Markdown' });
+    await ctx.editMessageText(
+      `📋 *Очередь полива Макса:*\n\n${lines}`,
+      { parse_mode: 'Markdown', reply_markup: backKeyboard() }
+    );
   });
 
   bot.callbackQuery('show_history', async (ctx) => {
@@ -113,14 +119,22 @@ function registerCallbacks(bot) {
        ORDER BY w.watered_at DESC LIMIT 10`
     );
 
-    if (!res.rows.length) return ctx.reply('📋 Макса ещё не поливали. История пуста.');
+    if (!res.rows.length) {
+      return ctx.editMessageText(
+        '📋 Макса ещё не поливали. История пуста.',
+        { reply_markup: backKeyboard() }
+      );
+    }
 
     const lines = res.rows.map((e, i) => {
       const date = new Date(e.watered_at).toLocaleString('ru-RU', { timeZone: 'Europe/Minsk' });
       return `${i + 1}. ${date} — ${e.name} (${e.water_ml} мл)`;
     }).join('\n');
 
-    await ctx.reply(`💧 *История поливов Макса:*\n\n${lines}`, { parse_mode: 'Markdown' });
+    await ctx.editMessageText(
+      `💧 *История поливов Макса:*\n\n${lines}`,
+      { parse_mode: 'Markdown', reply_markup: backKeyboard() }
+    );
   });
 
   bot.callbackQuery('show_next', async (ctx) => {
@@ -132,22 +146,42 @@ function registerCallbacks(bot) {
     const current = await getCurrentWaterer();
 
     if (!nextDate) {
-      return ctx.reply(
+      return ctx.editMessageText(
         `💧 Макса ещё не поливали через бота.\n\n📌 Режим: каждые *~${WATERING.freq} рабочих дней*\n👤 Первым поливает: *${current?.name || 'очередь пуста'}*`,
-        { parse_mode: 'Markdown' }
+        { parse_mode: 'Markdown', reply_markup: backKeyboard() }
       );
     }
 
-   const diffMs = nextDate.getTime() - Date.now();
-const daysLeft = Math.ceil(diffMs / 86400000)
+    const diffMs = nextDate.getTime() - Date.now();
+    const daysLeft = Math.floor(diffMs / 86400000); // ✅ floor вместо ceil
+
     if (daysLeft <= 0) {
-      await ctx.reply(`⚠️ Макса уже пора полить!\n👤 Очередь: *${current?.name || '—'}*`, { parse_mode: 'Markdown' });
+      await ctx.editMessageText(
+        `⚠️ Макса уже пора полить!\n👤 Очередь: *${current?.name || '—'}*`,
+        { parse_mode: 'Markdown', reply_markup: backKeyboard() }
+      );
     } else {
-      await ctx.reply(
+      await ctx.editMessageText(
         `📅 Следующий полив Макса: *${nextDate.toLocaleDateString('ru-RU')}*\n⏳ Через: *${daysLeft} дн.*\n💧 Польёт: *${current?.name || '—'}* (~${WATERING.waterLabel})`,
-        { parse_mode: 'Markdown' }
+        { parse_mode: 'Markdown', reply_markup: backKeyboard() }
       );
     }
+  });
+
+  bot.callbackQuery('back_to_menu', async (ctx) => {
+    const user = await ensureApproved(ctx);
+    if (!user) { await ctx.answerCallbackQuery(); return; }
+
+    await ctx.answerCallbackQuery();
+    const queue = await getQueue();
+    const state = await getQueueState();
+    const isCurrent = queue.length > 0 &&
+      queue[state.current_turn % queue.length]?.chat_id === ctx.chat.id;
+
+    await ctx.editMessageText(
+      '🌵 Главное меню:',
+      { reply_markup: mainKeyboard(user.in_queue || false, isCurrent) }
+    );
   });
 
   bot.callbackQuery('mark_watered', async (ctx) => {
@@ -163,17 +197,18 @@ const daysLeft = Math.ceil(diffMs / 86400000)
       return ctx.answerCallbackQuery({ text: '⛔ Сейчас не твоя очередь поливать Макса.', show_alert: true });
     }
 
-    const nextDate = await getNextWateringDate();
-    if (nextDate) {
-      const diffMs = nextDate.getTime() - Date.now();
-      if (diffMs > 0) {
-        const daysLeft = Math.ceil(diffMs / 86400000);
-        return ctx.answerCallbackQuery({
-          text: `⛔ Ещё рано! Следующий полив через ${daysLeft} дн. (${nextDate.toLocaleDateString('ru-RU')})`,
-          show_alert: true,
-        });
-      }
-    }
+  const nextDate = await getNextWateringDate();
+  if (nextDate) {
+    const diffMs = nextDate.getTime() - Date.now();
+    // ✅ Разрешаем полив если до даты меньше 24 часов или уже просрочено
+    if (diffMs > 24 * 60 * 60 * 1000) {
+      const daysLeft = Math.floor(diffMs / 86400000);
+      return ctx.answerCallbackQuery({
+      text: `⛔ Ещё рано! Следующий полив через ${daysLeft} дн. (${nextDate.toLocaleDateString('ru-RU')})`,
+      show_alert: true,
+    });
+  }
+}
 
     const name = user.name || ctx.from?.first_name || 'Кто-то';
     await db.query('INSERT INTO watering_log (user_id, water_ml) VALUES ($1, $2)', [user.id, WATERING.water]);

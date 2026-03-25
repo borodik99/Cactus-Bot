@@ -19,4 +19,8 @@ function mainKeyboard(inQueue, isCurrent = false) {
   return kb;
 }
 
-module.exports = { mainKeyboard };
+function backKeyboard(){
+  return new InlineKeyboard().text('◀️ Назад', 'back_to_menu');
+}
+
+module.exports = { mainKeyboard, backKeyboard };

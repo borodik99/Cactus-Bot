@@ -1,9 +1,9 @@
+
 const WATERING = {
-  freq: 10,
-  water: 70,
-  waterLabel: '70 мл',
-  time: '10:00 (каждые 10 дней, только по будням)',
+  freq: 14,          // каждые 14 рабочих дней
+  water: 25,
+  waterLabel: '25 мл',
+  time: '10:00 (каждые 14 дней, только по будням)',
   name: 'Макс',
 };
-
 module.exports = { WATERING };
