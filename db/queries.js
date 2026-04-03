@@ -98,7 +98,9 @@ async function rotateQueue(wateredChatId) {
     const currentTurn = Number(stateRes.rows[0]?.current_turn ?? 0);
 
     const lenRes = await client.query(
-      'SELECT COUNT(*)::int AS len FROM users WHERE in_queue = TRUE FOR UPDATE'
+      // PostgreSQL не позволяет `FOR UPDATE` вместе с агрегатами (COUNT/SUM и т.п.).
+      // Нам достаточно корректно посчитать длину внутри транзакции.
+      'SELECT COUNT(*)::int AS len FROM users WHERE in_queue = TRUE'
     );
     const len = Number(lenRes.rows[0]?.len ?? 0);
     if (len <= 1) {
