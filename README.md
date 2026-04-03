@@ -86,12 +86,17 @@ cd cactus-bot
 npm install
 ```
 
-**3. Создай файл `.env`:**
-```env
-BOT_API_KEY=your_telegram_bot_token
-DATABASE_URL=postgres://user:password@host:5432/dbname
-ADMIN_CHAT_ID=your_telegram_chat_id
+**3. Создай `.env` из примера:**
+```bash
+copy .env.example .env
 ```
+
+На Linux/macOS:
+```bash
+cp .env.example .env
+```
+
+Открой `.env` и заполни значения: `BOT_API_KEY`, `ADMIN_CHAT_ID`, а также параметры БД (`POSTGRES_*` и `PGADMIN_*`, если запускаешь через `docker-compose`).
 
 **4. Инициализируй базу данных:**
 ```bash
@@ -101,6 +106,14 @@ psql -U user -d dbname -f init.sql
 **5. Запусти бота:**
 ```bash
 node index.js
+```
+
+---
+
+## Docker (рекомендуется)
+Если запускаешь через `docker-compose`, достаточно:
+```bash
+docker compose up -d
 ```
 
 ---

@@ -27,11 +27,11 @@ registerCommands(bot);
 registerCallbacks(bot);
 registerAdminHandlers(bot);
 
+const { requireEnvNumber } = require('./config/env');
 const adminChatId = (() => {
-  const raw = process.env.ADMIN_CHAT_ID;
-  if (raw === undefined) return null;
-  const n = Number(raw);
-  return Number.isFinite(n) ? n : null;
+  // ADMIN_CHAT_ID нужен для работы с заявками и админ-командами.
+  // Если переменная отсутствует/битая — упадем с понятной ошибкой.
+  return requireEnvNumber('ADMIN_CHAT_ID');
 })();
 
 const commonCommands = [
