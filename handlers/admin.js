@@ -1,17 +1,21 @@
 const { InlineKeyboard } = require('grammy');
 const { getUser } = require('../db/queries');
-const { getQueue, getQueueState, setCurrentTurn, getCurrentWaterer } = require('../db/queries');
+const { getQueueState, setCurrentTurn, getCurrentWaterer } = require('../db/queries');
 const { WATERING } = require('../constants');
+const { db } = require('../bot');
 
 function registerAdminHandlers(bot) {
 
   bot.on('message:text', async (ctx) => {
+    // Обрабатываем только ответы на сообщение от бота (force_reply), чтобы не делать запрос в БД
+    // на каждый текст от каждого пользователя.
+    const replyText = ctx.message.reply_to_message?.text ?? '';
+    if (!replyText.includes('Напиши причину')) return;
+
     const user = await getUser(ctx.chat.id);
     if (!user?.waiting_skip_reason) return;
 
     const reason = ctx.message.text;
-    const { db } = require('../bot');
-
     await db.query('UPDATE users SET waiting_skip_reason = FALSE WHERE chat_id = $1', [ctx.chat.id]);
 
     const adminId = process.env.ADMIN_CHAT_ID;
@@ -35,9 +39,14 @@ function registerAdminHandlers(bot) {
     if (ctx.chat.id !== adminId) return ctx.answerCallbackQuery();
 
     const targetId = Number(ctx.match[1]);
-    const queue = await getQueue();
     const state = await getQueueState();
-    await setCurrentTurn((state.current_turn + 1) % queue.length);
+    const lenRes = await db.query(
+      'SELECT COUNT(*)::int AS len FROM users WHERE in_queue = TRUE'
+    );
+    const len = Number(lenRes.rows[0]?.len ?? 0);
+    if (len <= 0) return ctx.answerCallbackQuery({ text: 'Очередь пуста.' });
+
+    await setCurrentTurn((Number(state.current_turn) + 1) % len);
 
     const nextUser = await getCurrentWaterer();
 

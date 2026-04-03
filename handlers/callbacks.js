@@ -70,9 +70,12 @@ function registerCallbacks(bot) {
       [leavingPosition]
     );
 
-    const queue = await getQueue();
+    const lenRes = await db.query(
+      'SELECT COUNT(*)::int AS len FROM users WHERE in_queue = TRUE'
+    );
+    const len = Number(lenRes.rows[0]?.len ?? 0);
     const state = await getQueueState();
-    if (queue.length > 0 && state.current_turn >= queue.length) await setCurrentTurn(0);
+    if (len > 0 && Number(state.current_turn) >= len) await setCurrentTurn(0);
 
     await ctx.answerCallbackQuery({ text: '👋 Ты вышел из очереди' });
     await ctx.editMessageText(
@@ -173,10 +176,8 @@ function registerCallbacks(bot) {
     if (!user) { await ctx.answerCallbackQuery(); return; }
 
     await ctx.answerCallbackQuery();
-    const queue = await getQueue();
-    const state = await getQueueState();
-    const isCurrent = queue.length > 0 &&
-      queue[state.current_turn % queue.length]?.chat_id === ctx.chat.id;
+    const current = await getCurrentWaterer();
+    const isCurrent = current?.chat_id === ctx.chat.id;
 
     await ctx.editMessageText(
       '🌵 Главное меню:',
@@ -189,26 +190,23 @@ function registerCallbacks(bot) {
     if (!user) { await ctx.answerCallbackQuery(); return; }
 
     const chatId = ctx.chat.id;
-    const queue = await getQueue();
-    const state = await getQueueState();
-    const currentUser = queue[state.current_turn % queue.length];
-
+    const currentUser = await getCurrentWaterer();
     if (!currentUser || currentUser.chat_id !== chatId) {
       return ctx.answerCallbackQuery({ text: '⛔ Сейчас не твоя очередь поливать Макса.', show_alert: true });
     }
 
-  const nextDate = await getNextWateringDate();
-  if (nextDate) {
-    const diffMs = nextDate.getTime() - Date.now();
-    // ✅ Разрешаем полив если до даты меньше 24 часов или уже просрочено
-    if (diffMs > 24 * 60 * 60 * 1000) {
-      const daysLeft = Math.floor(diffMs / 86400000);
-      return ctx.answerCallbackQuery({
-      text: `⛔ Ещё рано! Следующий полив через ${daysLeft} дн. (${nextDate.toLocaleDateString('ru-RU')})`,
-      show_alert: true,
-    });
-  }
-}
+    const nextDate = await getNextWateringDate();
+    if (nextDate) {
+      const diffMs = nextDate.getTime() - Date.now();
+      // Разрешаем полив если до даты меньше 24 часов или уже просрочено.
+      if (diffMs > 24 * 60 * 60 * 1000) {
+        const daysLeft = Math.floor(diffMs / 86400000);
+        return ctx.answerCallbackQuery({
+          text: `⛔ Ещё рано! Следующий полив через ${daysLeft} дн. (${nextDate.toLocaleDateString('ru-RU')})`,
+          show_alert: true,
+        });
+      }
+    }
 
     const name = user.name || ctx.from?.first_name || 'Кто-то';
     await db.query('INSERT INTO watering_log (user_id, water_ml) VALUES ($1, $2)', [user.id, WATERING.water]);
@@ -241,9 +239,7 @@ function registerCallbacks(bot) {
     const user = await ensureApproved(ctx);
     if (!user) { await ctx.answerCallbackQuery(); return; }
 
-    const queue = await getQueue();
-    const state = await getQueueState();
-    const currentUser = queue[state.current_turn % queue.length];
+    const currentUser = await getCurrentWaterer();
 
     if (!currentUser || currentUser.chat_id !== ctx.chat.id) {
       return ctx.answerCallbackQuery({ text: 'Сейчас не твоя очередь.', show_alert: true });

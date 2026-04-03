@@ -1,6 +1,24 @@
 const { db } = require('../bot');
 const { WATERING } = require('../constants');
 
+/**
+ * @typedef {object} UserRow
+ * @property {number} id
+ * @property {number} chat_id
+ * @property {string} name
+ * @property {string|null} username
+ * @property {boolean} approved
+ * @property {boolean} in_queue
+ * @property {number|null} queue_position
+ * @property {boolean} waiting_skip_reason
+ */
+
+/**
+ * @typedef {object} CurrentWaterer
+ * @property {number} chat_id
+ * @property {string} name
+ */
+
 async function getUser(chatId) {
   const res = await db.query('SELECT * FROM users WHERE chat_id = $1', [chatId]);
   if (!res.rows[0]) return null;
@@ -24,10 +42,28 @@ async function setCurrentTurn(turn) {
 }
 
 async function getCurrentWaterer() {
-  const queue = await getQueue();
-  if (queue.length === 0) return null;
   const state = await getQueueState();
-  return queue[state.current_turn % queue.length] || null;
+  const lenRes = await db.query(
+    'SELECT COUNT(*)::int AS len FROM users WHERE in_queue = TRUE'
+  );
+  const len = Number(lenRes.rows[0]?.len ?? 0);
+  if (len <= 0) return null;
+
+  const idx = Number(state.current_turn % len);
+  const res = await db.query(
+    `SELECT chat_id, name
+     FROM users
+     WHERE in_queue = TRUE
+     ORDER BY queue_position ASC
+     OFFSET $1 LIMIT 1`,
+    [idx]
+  );
+
+  if (!res.rows[0]) return null;
+  return {
+    chat_id: Number(res.rows[0].chat_id),
+    name: res.rows[0].name,
+  };
 }
 
 async function getNextWateringDate() {
@@ -49,33 +85,69 @@ async function getNextWateringDate() {
 }
 
 async function rotateQueue(wateredChatId) {
-  const queue = await getQueue();
-  if (queue.length <= 1) return;
+  const wateredId = Number(wateredChatId);
 
-  const state = await getQueueState();
-  const currentIndex = state.current_turn % queue.length;
-  const currentUser = queue[currentIndex];
+  // Транзакция делает поворот очереди устойчивым к параллельным апдейтам.
+  const client = await db.connect();
+  try {
+    await client.query('BEGIN');
 
-  if (!currentUser || currentUser.chat_id !== wateredChatId) return;
+    const stateRes = await client.query(
+      'SELECT current_turn FROM queue_state WHERE id = 1 FOR UPDATE'
+    );
+    const currentTurn = Number(stateRes.rows[0]?.current_turn ?? 0);
 
-  await db.query(
-    'UPDATE users SET queue_position = queue_position - 1 WHERE in_queue = TRUE AND queue_position > $1',
-    [currentUser.queue_position]
-  );
+    const lenRes = await client.query(
+      'SELECT COUNT(*)::int AS len FROM users WHERE in_queue = TRUE FOR UPDATE'
+    );
+    const len = Number(lenRes.rows[0]?.len ?? 0);
+    if (len <= 1) {
+      await client.query('COMMIT');
+      return;
+    }
 
-  const res = await db.query(
-    'SELECT MAX(queue_position) AS max FROM users WHERE in_queue = TRUE'
-  );
-  const lastPos = res.rows[0].max ?? 0;
+    const idx = Number(currentTurn % len);
+    const currentUserRes = await client.query(
+      `SELECT chat_id, queue_position
+       FROM users
+       WHERE in_queue = TRUE
+       ORDER BY queue_position ASC
+       OFFSET $1 LIMIT 1
+       FOR UPDATE`,
+      [idx]
+    );
+    const currentUser = currentUserRes.rows[0];
+    if (!currentUser || Number(currentUser.chat_id) !== wateredId) {
+      await client.query('COMMIT');
+      return;
+    }
 
-  await db.query(
-    'UPDATE users SET queue_position = $1 WHERE chat_id = $2',
-    [lastPos + 1, wateredChatId]
-  );
+    const wateredPos = Number(currentUser.queue_position);
 
-  const newQueue = await getQueue();
-  if (state.current_turn >= newQueue.length) {
-    await setCurrentTurn(0);
+    // Сдвигаем остальных ближе к началу и отправляем полившего в конец очереди.
+    await client.query(
+      'UPDATE users SET queue_position = queue_position - 1 WHERE in_queue = TRUE AND queue_position > $1',
+      [wateredPos]
+    );
+    await client.query(
+      'UPDATE users SET queue_position = $1 WHERE in_queue = TRUE AND chat_id = $2',
+      [len - 1, wateredId]
+    );
+
+    // Защита на случай несогласованного current_turn (например, после выходов).
+    await client.query(
+      'UPDATE queue_state SET current_turn = CASE WHEN current_turn >= $1 THEN 0 ELSE current_turn END WHERE id = 1',
+      [len]
+    );
+
+    await client.query('COMMIT');
+  } catch (err) {
+    try {
+      await client.query('ROLLBACK');
+    } catch {}
+    throw err;
+  } finally {
+    client.release();
   }
 }
 

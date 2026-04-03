@@ -1,7 +1,7 @@
 const { db } = require('../bot');
 const { bot } = require('../bot');
 const { WATERING } = require('../constants');
-const { getUser, getQueue, getQueueState, getCurrentWaterer, getNextWateringDate, rotateQueue } = require('../db/queries');
+const { getUser, getCurrentWaterer, getNextWateringDate, rotateQueue } = require('../db/queries');
 const { mainKeyboard } = require('../keyboards');
 const { ensureApproved } = require('../helpers');
 
@@ -29,10 +29,8 @@ function registerCommands(bot) {
       ).catch(() => {});
     }
 
-    const queue = await getQueue();
-    const state = await getQueueState();
-    const isCurrent = queue.length > 0 &&
-      queue[state.current_turn % queue.length]?.chat_id === chatId;
+    const current = await getCurrentWaterer();
+    const isCurrent = current?.chat_id === chatId;
 
     await ctx.reply(
       `👋 Привет, *${name}*! Я слежу за поливом кактуса *Макса* 🌵\n\n` +
@@ -48,10 +46,8 @@ function registerCommands(bot) {
     const user = await ensureApproved(ctx);
     if (!user) return;
 
-    const queue = await getQueue();
-    const state = await getQueueState();
-    const isCurrent = queue.length > 0 &&
-      queue[state.current_turn % queue.length]?.chat_id === ctx.chat.id;
+    const current = await getCurrentWaterer();
+    const isCurrent = current?.chat_id === ctx.chat.id;
 
     await ctx.reply('🌵 Главное меню:', {
       reply_markup: mainKeyboard(user.in_queue || false, isCurrent),
@@ -136,9 +132,7 @@ function registerCommands(bot) {
     const user = await ensureApproved(ctx);
     if (!user) return;
 
-    const queue = await getQueue();
-    const state = await getQueueState();
-    const currentUser = queue[state.current_turn % queue.length];
+    const currentUser = await getCurrentWaterer();
 
     if (!currentUser || currentUser.chat_id !== ctx.chat.id) {
       return ctx.reply('⛔ Сейчас не твоя очередь поливать Макса.');
@@ -147,8 +141,9 @@ function registerCommands(bot) {
     const nextDate = await getNextWateringDate();
     if (nextDate) {
       const diffMs = nextDate.getTime() - Date.now();
-      if (diffMs > 0) {
-        const daysLeft = Math.ceil(diffMs / 86400000);
+      // Запрещаем ранний полив, если до даты ещё больше 24 часов.
+      if (diffMs > 24 * 60 * 60 * 1000) {
+        const daysLeft = Math.floor(diffMs / 86400000);
         return ctx.reply(
           `⛔ Ещё рано! Следующий полив через *${daysLeft} дн.* (${nextDate.toLocaleDateString('ru-RU')})`,
           { parse_mode: 'Markdown' }

@@ -26,26 +26,47 @@ bot.catch((err) => {
 registerCommands(bot);
 registerCallbacks(bot);
 registerAdminHandlers(bot);
-startCron();
 
-db.connect()
-  .then(async () => {
+const adminChatId = (() => {
+  const raw = process.env.ADMIN_CHAT_ID;
+  if (raw === undefined) return null;
+  const n = Number(raw);
+  return Number.isFinite(n) ? n : null;
+})();
+
+const commonCommands = [
+  { command: 'start', description: 'Запустить бота' },
+  { command: 'menu', description: 'Открыть главное меню' },
+  { command: 'watered', description: 'Отметить полив' },
+  { command: 'help', description: 'Показать список команд' },
+];
+
+const adminCommands = [
+  ...commonCommands,
+  { command: 'users', description: 'Список пользователей (админ)' },
+  { command: 'approve', description: 'Выдать доступ (админ)' },
+  { command: 'revoke', description: 'Забрать доступ (админ)' },
+];
+
+(async () => {
+  try {
+    // Важно: Pool сам управляет клиентом, поэтому используем query вместо connect() без release()
+    await db.query('SELECT 1');
     console.log('✅ Подключение к БД успешно');
 
-    await bot.api.setMyCommands([
-      { command: 'start', description: 'Запустить бота' },
-      { command: 'menu', description: 'Открыть главное меню' },
-      { command: 'watered', description: 'Отметить полив' },
-      { command: 'help', description: 'Показать список команд' },
-      { command: 'users', description: 'Список пользователей (админ)' },
-      { command: 'approve', description: 'Выдать доступ (админ)' },
-      { command: 'revoke', description: 'Забрать доступ (админ)' },
-    ]);
+    // Показываем обычные команды всем
+    await bot.api.setMyCommands(commonCommands);
+
+    // Показываем админские команды только в чате админа (scoped)
+    if (adminChatId !== null) {
+      await bot.api.setMyCommands(adminCommands, { type: 'chat', chat_id: adminChatId });
+    }
 
     bot.start();
     console.log('🌵 Бот запущен! Слежу за Максом 🌵');
-  })
-  .catch(err => {
-    console.error('❌ Ошибка подключения к БД:', err.message);
+    startCron();
+  } catch (err) {
+    console.error('❌ Ошибка подключения к БД:', err?.message || err);
     process.exit(1);
-  });
+  }
+})();
