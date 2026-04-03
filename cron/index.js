@@ -3,6 +3,7 @@ const { InlineKeyboard } = require('grammy');
 const { bot, db } = require('../bot');
 const { WATERING } = require('../constants');
 const { getCurrentWaterer, getNextWateringDate } = require('../db/queries');
+const { logger } = require('../config/logger');
 
 function startCron() {
   let running = false;
@@ -42,7 +43,7 @@ function startCron() {
       }
 
     } catch (e) {
-      console.error('❌ Ошибка cron:', e.message);
+      logger.error({ err: e }, 'Cron error');
     } finally {
       running = false;
     }

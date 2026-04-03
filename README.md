@@ -167,6 +167,18 @@ rotateQueue() — поливший уходит в конец
 BOT_API_KEY      # токен от @BotFather
 DATABASE_URL     # строка подключения к PostgreSQL
 ADMIN_CHAT_ID    # твой Telegram ID (узнать у @userinfobot)
+
+# Логирование (как в pino): trace, debug, info, warn, error, fatal
+# По умолчанию: debug
+# trace/debug — максимум деталей; info/warn/error — тише
+LOG_LEVEL=debug
+
+# grammY runner: сколько апдейтов обрабатывается параллельно
+RUNNER_CONCURRENCY=10
+
+# Telegram Bot API retry: лимиты ретраев (rate limit / transient errors)
+TELEGRAM_MAX_RETRY_ATTEMPTS=3
+TELEGRAM_MAX_RETRY_DELAY_SECONDS=30
 ```
 
 ---

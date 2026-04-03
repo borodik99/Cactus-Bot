@@ -1,7 +1,7 @@
 const { InlineKeyboard } = require('grammy');
 const { db } = require('../bot');
 const { WATERING } = require('../constants');
-const { getQueue, getQueueState, setCurrentTurn, getCurrentWaterer, getNextWateringDate, rotateQueue } = require('../db/queries');
+const { getQueue, getQueueState, getCurrentWaterer, getNextWateringDate, joinQueue, leaveQueue, markWatered } = require('../db/queries');
 const { ensureApproved } = require('../helpers');
 const { mainKeyboard, backKeyboard } = require('../keyboards');
 
@@ -14,27 +14,17 @@ function registerCallbacks(bot) {
     const chatId = ctx.chat.id;
     if (user.in_queue) return ctx.answerCallbackQuery({ text: 'Ты уже в очереди! 🌿' });
 
-    const res = await db.query(
-      'SELECT COALESCE(MAX(queue_position), -1) + 1 AS pos FROM users WHERE in_queue = TRUE'
-    );
-    const position = res.rows[0].pos;
+    const { position, len } = await joinQueue(chatId);
+    const current = await getCurrentWaterer();
+    const isCurrent = current?.chat_id === chatId;
 
-    await db.query(
-      'UPDATE users SET in_queue = TRUE, queue_position = $1 WHERE chat_id = $2',
-      [position, chatId]
-    );
-
-    const queue = await getQueue();
-    const state = await getQueueState();
-    const isCurrent = queue.length > 0 &&
-      queue[state.current_turn % queue.length]?.chat_id === chatId;
-
+    await ctx.answerCallbackQuery();
     await ctx.editMessageText(
-      `✅ *${user.name}*, ты в очереди по уходу за Максом!\n📍 Позиция: *${position + 1}* из ${queue.length}`,
+      `✅ *${user.name}*, ты в очереди по уходу за Максом!\n📍 Позиция: *${position + 1}* из ${len}`,
       { parse_mode: 'Markdown', reply_markup: mainKeyboard(true, isCurrent) }
     );
 
-    if (queue.length === 1) {
+    if (len === 1) {
       const keyboard = new InlineKeyboard().text('✅ Полил!', 'mark_watered');
       await bot.api.sendMessage(
         chatId,
@@ -63,19 +53,7 @@ function registerCallbacks(bot) {
       }
     }
 
-    const leavingPosition = user.queue_position;
-    await db.query('UPDATE users SET in_queue = FALSE, queue_position = NULL WHERE chat_id = $1', [chatId]);
-    await db.query(
-      'UPDATE users SET queue_position = queue_position - 1 WHERE in_queue = TRUE AND queue_position > $1',
-      [leavingPosition]
-    );
-
-    const lenRes = await db.query(
-      'SELECT COUNT(*)::int AS len FROM users WHERE in_queue = TRUE'
-    );
-    const len = Number(lenRes.rows[0]?.len ?? 0);
-    const state = await getQueueState();
-    if (len > 0 && Number(state.current_turn) >= len) await setCurrentTurn(0);
+    const { len } = await leaveQueue(chatId);
 
     await ctx.answerCallbackQuery({ text: '👋 Ты вышел из очереди' });
     await ctx.editMessageText(
@@ -209,8 +187,13 @@ function registerCallbacks(bot) {
     }
 
     const name = user.name || ctx.from?.first_name || 'Кто-то';
-    await db.query('INSERT INTO watering_log (user_id, water_ml) VALUES ($1, $2)', [user.id, WATERING.water]);
-    await rotateQueue(chatId);
+    const ok = await markWatered(chatId, WATERING.water);
+    if (!ok) {
+      return ctx.answerCallbackQuery({
+        text: '⛔ Очередь изменилась, попробуй ещё раз.',
+        show_alert: true,
+      });
+    }
 
     const nextUser = await getCurrentWaterer();
     const nextWateringDate = await getNextWateringDate();

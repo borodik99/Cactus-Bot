@@ -39,6 +39,10 @@ services:
       BOT_API_KEY: ${BOT_API_KEY}
       ADMIN_CHAT_ID: ${ADMIN_CHAT_ID}
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      LOG_LEVEL: ${LOG_LEVEL:-debug}
+      RUNNER_CONCURRENCY: ${RUNNER_CONCURRENCY:-10}
+      TELEGRAM_MAX_RETRY_ATTEMPTS: ${TELEGRAM_MAX_RETRY_ATTEMPTS:-3}
+      TELEGRAM_MAX_RETRY_DELAY_SECONDS: ${TELEGRAM_MAX_RETRY_DELAY_SECONDS:-30}
     depends_on:
       postgres:
         condition: service_healthy  # ждём пока postgres полностью запустится

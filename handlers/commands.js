@@ -1,7 +1,7 @@
 const { db } = require('../bot');
 const { bot } = require('../bot');
 const { WATERING } = require('../constants');
-const { getUser, getCurrentWaterer, getNextWateringDate, rotateQueue } = require('../db/queries');
+const { getUser, getCurrentWaterer, getNextWateringDate, markWatered } = require('../db/queries');
 const { InlineKeyboard } = require('grammy');
 const { mainKeyboard } = require('../keyboards');
 const { ensureApproved } = require('../helpers');
@@ -153,9 +153,12 @@ function registerCommands(bot) {
       }
     }
 
+    const ok = await markWatered(ctx.chat.id, WATERING.water);
+    if (!ok) {
+      return ctx.reply('⛔ Очередь изменилась, попробуй ещё раз.').catch(() => {});
+    }
+
     const name = user.name || ctx.from?.first_name || 'Кто-то';
-    await db.query('INSERT INTO watering_log (user_id, water_ml) VALUES ($1, $2)', [user.id, WATERING.water]);
-    await rotateQueue(ctx.chat.id);
 
     const nextUser = await getCurrentWaterer();
     const nextWateringDate = await getNextWateringDate();
