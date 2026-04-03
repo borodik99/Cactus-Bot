@@ -185,6 +185,8 @@ function registerAdminHandlers(bot) {
     const reason = ctx.message.text;
     await db.query('UPDATE users SET waiting_skip_reason = FALSE WHERE chat_id = $1', [ctx.chat.id]);
 
+    await ctx.react('👍').catch(() => {});
+
     const adminId = process.env.ADMIN_CHAT_ID;
     if (!adminId) return;
 

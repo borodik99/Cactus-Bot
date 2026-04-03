@@ -4,6 +4,7 @@ const { bot, db } = require('./bot');
 const { registerCommands } = require('./handlers/commands');
 const { registerCallbacks } = require('./handlers/callbacks');
 const { registerAdminHandlers } = require('./handlers/admin');
+const { registerGlobalMessageHandlers } = require('./handlers/global');
 const { startCron } = require('./cron');
 
 bot.catch((err) => {
@@ -26,6 +27,7 @@ bot.catch((err) => {
 registerCommands(bot);
 registerCallbacks(bot);
 registerAdminHandlers(bot);
+registerGlobalMessageHandlers(bot);
 
 const { requireEnvNumber } = require('./config/env');
 const adminChatId = (() => {
