@@ -2,6 +2,7 @@ const { db } = require('../bot');
 const { bot } = require('../bot');
 const { WATERING } = require('../constants');
 const { getUser, getCurrentWaterer, getNextWateringDate, rotateQueue } = require('../db/queries');
+const { InlineKeyboard } = require('grammy');
 const { mainKeyboard } = require('../keyboards');
 const { ensureApproved } = require('../helpers');
 
@@ -24,9 +25,16 @@ function registerCommands(bot) {
     const adminId = process.env.ADMIN_CHAT_ID;
     // Админу не нужно получать уведомление о собственном регистрации.
     if (adminId && !user.approved && Number(adminId) !== chatId) {
+      const keyboard = new InlineKeyboard()
+        .text('Принять', `admin_user_accept_${chatId}`)
+        .success()
+        .text('Отклонить', `admin_user_reject_${chatId}`)
+        .danger();
+
       await bot.api.sendMessage(
         adminId,
-        `🆕 Новый пользователь:\nID: ${chatId}\nИмя: ${name}\nUsername: @${username || '—'}\n\nВыдай доступ: /approve ${chatId}`
+        `🆕 Новый пользователь:\nID: ${chatId}\nИмя: ${name}\nUsername: @${username || '—'}\n\nВыберите действие:`,
+        { reply_markup: keyboard }
       ).catch(() => {});
     }
 
@@ -73,8 +81,7 @@ function registerCommands(bot) {
       text +=
         '\nАдминские команды:\n' +
         '/users — список пользователей\n' +
-        '/approve 123456 — выдать доступ\n' +
-        '/revoke 123456 — забрать доступ\n';
+        'Одобрение новых пользователей — кнопками в сообщении админа\n';
     }
 
     await ctx.reply(text);
@@ -99,34 +106,22 @@ function registerCommands(bot) {
       return `${i + 1}. ${u.name} (${uname})\n   ID: ${u.chat_id}\n   ${status}`;
     }).join('\n\n');
 
-    await ctx.reply(`📋 Пользователи:\n\n${lines}\n\n• /approve ID — выдать доступ\n• /revoke ID — забрать доступ`);
-  });
+    const keyboard = new InlineKeyboard();
+    for (const u of res.rows) {
+      if (u.approved) {
+        keyboard
+          .text(`✅ Разблокировать: ${u.name}`, `admin_user_unblock_${u.chat_id}`)
+          .success()
+          .row();
+      } else {
+        keyboard
+          .text(`⛔ Заблокировать: ${u.name}`, `admin_user_block_${u.chat_id}`)
+          .danger()
+          .row();
+      }
+    }
 
-  bot.command('approve', async (ctx) => {
-    const adminId = Number(process.env.ADMIN_CHAT_ID);
-    if (ctx.chat.id !== adminId) return ctx.reply('Команда только для админа.');
-
-    const targetId = Number(ctx.message.text.split(' ')[1]);
-    if (!targetId) return ctx.reply('Используй: /approve 123456');
-
-    await db.query('UPDATE users SET approved = TRUE WHERE chat_id = $1', [targetId]);
-    await ctx.reply(`Пользователь ${targetId} одобрен.`);
-    await bot.api.sendMessage(targetId, '✅ Твоя заявка одобрена! Можешь пользоваться меню и очередью 🌵').catch(() => {});
-  });
-
-  bot.command('revoke', async (ctx) => {
-    const adminId = Number(process.env.ADMIN_CHAT_ID);
-    if (ctx.chat.id !== adminId) return ctx.reply('Команда только для админа.');
-
-    const targetId = Number(ctx.message.text.split(' ')[1]);
-    if (!targetId) return ctx.reply('Используй: /revoke 123456');
-
-    await db.query(
-      'UPDATE users SET approved = FALSE, in_queue = FALSE, queue_position = NULL WHERE chat_id = $1',
-      [targetId]
-    );
-    await ctx.reply(`Доступ пользователя ${targetId} отобран.`);
-    await bot.api.sendMessage(targetId, '⛔ Твой доступ к боту был отозван администратором.').catch(() => {});
+    await ctx.reply(`📋 Пользователи:\n\n${lines}`, { reply_markup: keyboard });
   });
 
   bot.command('watered', async (ctx) => {

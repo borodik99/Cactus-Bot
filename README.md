@@ -64,7 +64,7 @@ project/
 ├── keyboards/
 │   └── index.js       # Клавиатуры бота
 ├── handlers/
-│   ├── commands.js    # /start, /menu, /help, /users, /approve, /revoke, /watered
+│   ├── commands.js    # /start, /menu, /help, /users, /watered
 │   ├── callbacks.js   # Обработчики inline-кнопок
 │   └── admin.js       # Одобрение/отклонение пропуска очереди
 └── cron/
@@ -137,8 +137,8 @@ docker compose up -d
 | `/watered` | Отметить полив |
 | `/help` | Список команд |
 | `/users` | Все пользователи *(админ)* |
-| `/approve ID` | Выдать доступ *(админ)* |
-| `/revoke ID` | Забрать доступ *(админ)* |
+
+Одобрение/отклонение новых пользователей делается кнопками в сообщении админа.
 
 ---
 

@@ -44,8 +44,6 @@ const commonCommands = [
 const adminCommands = [
   ...commonCommands,
   { command: 'users', description: 'Список пользователей (админ)' },
-  { command: 'approve', description: 'Выдать доступ (админ)' },
-  { command: 'revoke', description: 'Забрать доступ (админ)' },
 ];
 
 (async () => {
