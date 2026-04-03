@@ -160,7 +160,7 @@ ADMIN_CHAT_ID    # твой Telegram ID (узнать у @userinfobot)
 
 ## 🛠️ Сборка для разработчиков
 
-Понадобится Node.js 18+.
+Понадобится Node.js 20+ (для `node --watch`).
 
 ```bash
 # Клонируй репозиторий
@@ -171,7 +171,7 @@ cd cactus-bot
 npm install
 
 # Запусти в режиме разработки
-node index.js
+npm run dev
 ```
 
 ---
