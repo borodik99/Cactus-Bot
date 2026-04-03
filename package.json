@@ -20,7 +20,7 @@
   "homepage": "https://github.com/borodik99/Cactus-Bot#readme",
   "dependencies": {
     "@grammyjs/hydrate": "^1.6.0",
-    "dotenv": "^17.3.1",
+    "dotenv": "^17.4.0",
     "grammy": "^1.41.1",
     "node-cron": "^4.2.1",
     "nodemon": "^3.1.14",
