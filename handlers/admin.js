@@ -92,7 +92,8 @@ function registerAdminHandlers(bot) {
 
     const keyboard = new InlineKeyboard();
     for (const u of res.rows) {
-      if (u.approved) {
+      // approved=true означает "доступ разрешён", значит кнопку нужно показывать как "заблокировать".
+      if (!u.approved) {
         keyboard
           .text(`✅ Разблокировать: ${u.name}`, `admin_user_unblock_${u.chat_id}`)
           .success()

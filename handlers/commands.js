@@ -23,6 +23,11 @@ function registerCommands(bot) {
     const user = await getUser(chatId);
 
     const adminId = process.env.ADMIN_CHAT_ID;
+    // Админу не нужна ручная модерация: выдаём доступ сразу при /start.
+    // Иначе он будет оставаться approved=false до тех пор, пока не попадёт в ensureApproved().
+    if (adminId && Number(adminId) === chatId && user && !user.approved) {
+      await db.query('UPDATE users SET approved = TRUE WHERE chat_id = $1', [chatId]);
+    }
     // Админу не нужно получать уведомление о собственном регистрации.
     if (adminId && !user.approved && Number(adminId) !== chatId) {
       const keyboard = new InlineKeyboard()
@@ -108,7 +113,8 @@ function registerCommands(bot) {
 
     const keyboard = new InlineKeyboard();
     for (const u of res.rows) {
-      if (u.approved) {
+      // approved=true означает "доступ разрешён" -> админ должен видеть "заблокировать".
+      if (!u.approved) {
         keyboard
           .text(`✅ Разблокировать: ${u.name}`, `admin_user_unblock_${u.chat_id}`)
           .success()
