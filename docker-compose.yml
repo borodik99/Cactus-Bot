@@ -37,6 +37,7 @@ services:
     restart: always
     environment:
       BOT_API_KEY: ${BOT_API_KEY}
+      ADMIN_CHAT_ID: ${ADMIN_CHAT_ID}
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
     depends_on:
       postgres:
