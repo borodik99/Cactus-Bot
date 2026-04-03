@@ -22,7 +22,8 @@ function registerCommands(bot) {
     const user = await getUser(chatId);
 
     const adminId = process.env.ADMIN_CHAT_ID;
-    if (adminId && !user.approved) {
+    // Админу не нужно получать уведомление о собственном регистрации.
+    if (adminId && !user.approved && Number(adminId) !== chatId) {
       await bot.api.sendMessage(
         adminId,
         `🆕 Новый пользователь:\nID: ${chatId}\nИмя: ${name}\nUsername: @${username || '—'}\n\nВыдай доступ: /approve ${chatId}`
