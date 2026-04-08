@@ -252,7 +252,6 @@ function registerCallbacks(bot) {
     await ctx.answerCallbackQuery();
     await ctx.reply(
       `⏩ Напиши причину, по которой хочешь пропустить очередь.\nСообщение уйдёт админу, и он решит — передать очередь или нет.\n\nПросто отправь текст в ответ на это сообщение.`,
-      { reply_markup: { force_reply: true } }
     );
 
     await db.query('UPDATE users SET waiting_skip_reason = TRUE WHERE chat_id = $1', [ctx.chat.id]);

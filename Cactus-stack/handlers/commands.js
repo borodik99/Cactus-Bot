@@ -147,8 +147,9 @@ function registerCommands(bot) {
     const nextDate = await getNextWateringDate();
     if (nextDate) {
       const diffMs = nextDate.getTime() - Date.now();
-      if (diffMs > 0) {
-        const daysLeft = Math.ceil(diffMs / 86400000);
+      // ✅ Допуск 24 часа
+      if (diffMs > 24 * 60 * 60 * 1000) {
+        const daysLeft = Math.floor(diffMs / 86400000);
         return ctx.reply(
           `⛔ Ещё рано! Следующий полив через *${daysLeft} дн.* (${nextDate.toLocaleDateString('ru-RU')})`,
           { parse_mode: 'Markdown' }
