@@ -3,23 +3,25 @@ const { InlineKeyboard } = require('grammy');
 const { bot, db } = require('../bot');
 const { WATERING } = require('../constants');
 const { getCurrentWaterer, getNextWateringDate } = require('../db/queries');
+const { logger } = require('../config/logger');
 
 function startCron() {
+  let running = false;
 
   // Каждый день в 10:00 — проверяем нужно ли слать уведомление
+  const keyboard = new InlineKeyboard().text('✅ Полил!', 'mark_watered');
+
   cron.schedule('0 10 * * *', async () => {
+    if (running) return;
+    running = true;
     try {
-      const nextDate = await getNextWateringDate();
-      console.log('🕙 Cron check. nextDate:', nextDate?.toISOString(), 'now:', new Date().toISOString());
-      if (!nextDate) return;
+      const [nextDate, current] = await Promise.all([
+        getNextWateringDate(),
+        getCurrentWaterer(),
+      ]);
+      if (!nextDate || !current) return;
 
       const diffMs = nextDate.getTime() - Date.now();
-      console.log('diffMs:', diffMs);
-
-      const current = await getCurrentWaterer();
-      if (!current) return;
-
-      const keyboard = new InlineKeyboard().text('✅ Полил!', 'mark_watered');
 
       // Сегодня день полива
       if (diffMs <= 0 && diffMs > -86400000) {
@@ -41,7 +43,9 @@ function startCron() {
       }
 
     } catch (e) {
-      console.error('❌ Ошибка cron:', e.message);
+      logger.error({ err: e }, 'Cron error');
+    } finally {
+      running = false;
     }
   }, { timezone: 'Europe/Minsk' });
 

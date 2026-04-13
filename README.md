@@ -64,7 +64,7 @@ project/
 ├── keyboards/
 │   └── index.js       # Клавиатуры бота
 ├── handlers/
-│   ├── commands.js    # /start, /menu, /help, /users, /approve, /revoke, /watered
+│   ├── commands.js    # /start, /menu, /help, /users, /watered
 │   ├── callbacks.js   # Обработчики inline-кнопок
 │   └── admin.js       # Одобрение/отклонение пропуска очереди
 └── cron/
@@ -86,12 +86,17 @@ cd cactus-bot
 npm install
 ```
 
-**3. Создай файл `.env`:**
-```env
-BOT_API_KEY=your_telegram_bot_token
-DATABASE_URL=postgres://user:password@host:5432/dbname
-ADMIN_CHAT_ID=your_telegram_chat_id
+**3. Создай `.env` из примера:**
+```bash
+copy .env.example .env
 ```
+
+На Linux/macOS:
+```bash
+cp .env.example .env
+```
+
+Открой `.env` и заполни значения: `BOT_API_KEY`, `ADMIN_CHAT_ID`, а также параметры БД (`POSTGRES_*` и `PGADMIN_*`, если запускаешь через `docker-compose`).
 
 **4. Инициализируй базу данных:**
 ```bash
@@ -101,6 +106,14 @@ psql -U user -d dbname -f init.sql
 **5. Запусти бота:**
 ```bash
 node index.js
+```
+
+---
+
+## Docker (рекомендуется)
+Если запускаешь через `docker-compose`, достаточно:
+```bash
+docker compose up -d
 ```
 
 ---
@@ -124,8 +137,8 @@ node index.js
 | `/watered` | Отметить полив |
 | `/help` | Список команд |
 | `/users` | Все пользователи *(админ)* |
-| `/approve ID` | Выдать доступ *(админ)* |
-| `/revoke ID` | Забрать доступ *(админ)* |
+
+Одобрение/отклонение новых пользователей делается кнопками в сообщении админа.
 
 ---
 
@@ -154,13 +167,25 @@ rotateQueue() — поливший уходит в конец
 BOT_API_KEY      # токен от @BotFather
 DATABASE_URL     # строка подключения к PostgreSQL
 ADMIN_CHAT_ID    # твой Telegram ID (узнать у @userinfobot)
+
+# Логирование (как в pino): trace, debug, info, warn, error, fatal
+# По умолчанию: debug
+# trace/debug — максимум деталей; info/warn/error — тише
+LOG_LEVEL=debug
+
+# grammY runner: сколько апдейтов обрабатывается параллельно
+RUNNER_CONCURRENCY=10
+
+# Telegram Bot API retry: лимиты ретраев (rate limit / transient errors)
+TELEGRAM_MAX_RETRY_ATTEMPTS=3
+TELEGRAM_MAX_RETRY_DELAY_SECONDS=30
 ```
 
 ---
 
 ## 🛠️ Сборка для разработчиков
 
-Понадобится Node.js 18+.
+Понадобится Node.js 20+ (для `node --watch`).
 
 ```bash
 # Клонируй репозиторий
@@ -171,7 +196,7 @@ cd cactus-bot
 npm install
 
 # Запусти в режиме разработки
-node index.js
+npm run dev
 ```
 
 ---

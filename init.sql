@@ -30,3 +30,13 @@ CREATE TABLE queue_state (
 
 -- Вставляем начальное состояние очереди
 INSERT INTO queue_state (id) VALUES (1);
+
+-- Индексы для ускорения частых запросов бота
+CREATE INDEX IF NOT EXISTS idx_users_in_queue_queue_position
+  ON users (in_queue, queue_position);
+
+CREATE INDEX IF NOT EXISTS idx_watering_log_watered_at_desc
+  ON watering_log (watered_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_watering_log_user_id_watered_at_desc
+  ON watering_log (user_id, watered_at DESC);

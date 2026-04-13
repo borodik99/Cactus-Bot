@@ -1,7 +1,8 @@
 const { db } = require('../bot');
 const { bot } = require('../bot');
 const { WATERING } = require('../constants');
-const { getUser, getQueue, getQueueState, getCurrentWaterer, getNextWateringDate, rotateQueue } = require('../db/queries');
+const { getUser, getCurrentWaterer, getNextWateringDate, markWatered } = require('../db/queries');
+const { InlineKeyboard } = require('grammy');
 const { mainKeyboard } = require('../keyboards');
 const { ensureApproved } = require('../helpers');
 
@@ -22,17 +23,28 @@ function registerCommands(bot) {
     const user = await getUser(chatId);
 
     const adminId = process.env.ADMIN_CHAT_ID;
-    if (adminId && !user.approved) {
+    // Админу не нужна ручная модерация: выдаём доступ сразу при /start.
+    // Иначе он будет оставаться approved=false до тех пор, пока не попадёт в ensureApproved().
+    if (adminId && Number(adminId) === chatId && user && !user.approved) {
+      await db.query('UPDATE users SET approved = TRUE WHERE chat_id = $1', [chatId]);
+    }
+    // Админу не нужно получать уведомление о собственном регистрации.
+    if (adminId && !user.approved && Number(adminId) !== chatId) {
+      const keyboard = new InlineKeyboard()
+        .text('Принять', `admin_user_accept_${chatId}`)
+        .success()
+        .text('Отклонить', `admin_user_reject_${chatId}`)
+        .danger();
+
       await bot.api.sendMessage(
         adminId,
-        `🆕 Новый пользователь:\nID: ${chatId}\nИмя: ${name}\nUsername: @${username || '—'}\n\nВыдай доступ: /approve ${chatId}`
+        `🆕 Новый пользователь:\nID: ${chatId}\nИмя: ${name}\nUsername: @${username || '—'}\n\nВыберите действие:`,
+        { reply_markup: keyboard }
       ).catch(() => {});
     }
 
-    const queue = await getQueue();
-    const state = await getQueueState();
-    const isCurrent = queue.length > 0 &&
-      queue[state.current_turn % queue.length]?.chat_id === chatId;
+    const current = await getCurrentWaterer();
+    const isCurrent = current?.chat_id === chatId;
 
     await ctx.reply(
       `👋 Привет, *${name}*! Я слежу за поливом кактуса *Макса* 🌵\n\n` +
@@ -48,10 +60,8 @@ function registerCommands(bot) {
     const user = await ensureApproved(ctx);
     if (!user) return;
 
-    const queue = await getQueue();
-    const state = await getQueueState();
-    const isCurrent = queue.length > 0 &&
-      queue[state.current_turn % queue.length]?.chat_id === ctx.chat.id;
+    const current = await getCurrentWaterer();
+    const isCurrent = current?.chat_id === ctx.chat.id;
 
     await ctx.reply('🌵 Главное меню:', {
       reply_markup: mainKeyboard(user.in_queue || false, isCurrent),
@@ -76,8 +86,7 @@ function registerCommands(bot) {
       text +=
         '\nАдминские команды:\n' +
         '/users — список пользователей\n' +
-        '/approve 123456 — выдать доступ\n' +
-        '/revoke 123456 — забрать доступ\n';
+        'Одобрение новых пользователей — кнопками в сообщении админа\n';
     }
 
     await ctx.reply(text);
@@ -102,43 +111,30 @@ function registerCommands(bot) {
       return `${i + 1}. ${u.name} (${uname})\n   ID: ${u.chat_id}\n   ${status}`;
     }).join('\n\n');
 
-    await ctx.reply(`📋 Пользователи:\n\n${lines}\n\n• /approve ID — выдать доступ\n• /revoke ID — забрать доступ`);
-  });
+    const keyboard = new InlineKeyboard();
+    for (const u of res.rows) {
+      // approved=true означает "доступ разрешён" -> админ должен видеть "заблокировать".
+      if (!u.approved) {
+        keyboard
+          .text(`✅ Разблокировать: ${u.name}`, `admin_user_unblock_${u.chat_id}`)
+          .success()
+          .row();
+      } else {
+        keyboard
+          .text(`⛔ Заблокировать: ${u.name}`, `admin_user_block_${u.chat_id}`)
+          .danger()
+          .row();
+      }
+    }
 
-  bot.command('approve', async (ctx) => {
-    const adminId = Number(process.env.ADMIN_CHAT_ID);
-    if (ctx.chat.id !== adminId) return ctx.reply('Команда только для админа.');
-
-    const targetId = Number(ctx.message.text.split(' ')[1]);
-    if (!targetId) return ctx.reply('Используй: /approve 123456');
-
-    await db.query('UPDATE users SET approved = TRUE WHERE chat_id = $1', [targetId]);
-    await ctx.reply(`Пользователь ${targetId} одобрен.`);
-    await bot.api.sendMessage(targetId, '✅ Твоя заявка одобрена! Можешь пользоваться меню и очередью 🌵').catch(() => {});
-  });
-
-  bot.command('revoke', async (ctx) => {
-    const adminId = Number(process.env.ADMIN_CHAT_ID);
-    if (ctx.chat.id !== adminId) return ctx.reply('Команда только для админа.');
-
-    const targetId = Number(ctx.message.text.split(' ')[1]);
-    if (!targetId) return ctx.reply('Используй: /revoke 123456');
-
-    await db.query(
-      'UPDATE users SET approved = FALSE, in_queue = FALSE, queue_position = NULL WHERE chat_id = $1',
-      [targetId]
-    );
-    await ctx.reply(`Доступ пользователя ${targetId} отобран.`);
-    await bot.api.sendMessage(targetId, '⛔ Твой доступ к боту был отозван администратором.').catch(() => {});
+    await ctx.reply(`📋 Пользователи:\n\n${lines}`, { reply_markup: keyboard });
   });
 
   bot.command('watered', async (ctx) => {
     const user = await ensureApproved(ctx);
     if (!user) return;
 
-    const queue = await getQueue();
-    const state = await getQueueState();
-    const currentUser = queue[state.current_turn % queue.length];
+    const currentUser = await getCurrentWaterer();
 
     if (!currentUser || currentUser.chat_id !== ctx.chat.id) {
       return ctx.reply('⛔ Сейчас не твоя очередь поливать Макса.');
@@ -147,7 +143,7 @@ function registerCommands(bot) {
     const nextDate = await getNextWateringDate();
     if (nextDate) {
       const diffMs = nextDate.getTime() - Date.now();
-      // ✅ Допуск 24 часа
+      // Запрещаем ранний полив, если до даты ещё больше 24 часов.
       if (diffMs > 24 * 60 * 60 * 1000) {
         const daysLeft = Math.floor(diffMs / 86400000);
         return ctx.reply(
@@ -157,9 +153,12 @@ function registerCommands(bot) {
       }
     }
 
+    const ok = await markWatered(ctx.chat.id, WATERING.water);
+    if (!ok) {
+      return ctx.reply('⛔ Очередь изменилась, попробуй ещё раз.').catch(() => {});
+    }
+
     const name = user.name || ctx.from?.first_name || 'Кто-то';
-    await db.query('INSERT INTO watering_log (user_id, water_ml) VALUES ($1, $2)', [user.id, WATERING.water]);
-    await rotateQueue(ctx.chat.id);
 
     const nextUser = await getCurrentWaterer();
     const nextWateringDate = await getNextWateringDate();
