@@ -1,5 +1,5 @@
 require('dotenv').config();
-const { GrammyError, HttpError } = require('grammy'); // ✅ импорт ошибок
+const { GrammyError, HttpError } = require('grammy');
 const { bot, db } = require('./bot');
 const { logger } = require('./config/logger');
 const { registerCommands } = require('./handlers/commands');
@@ -8,7 +8,42 @@ const { registerAdminHandlers } = require('./handlers/admin');
 const { registerGlobalMessageHandlers } = require('./handlers/global');
 const { startCron } = require('./cron');
 const { run } = require('@grammyjs/runner');
+const { upsertUser } = require('./db/queries');
+const { requireEnvNumber } = require('./config/env');
 
+const adminChatId = requireEnvNumber('ADMIN_CHAT_ID');
+
+const commonCommands = [
+  { command: 'start',   description: 'Запустить бота' },
+  { command: 'menu',    description: 'Открыть главное меню' },
+  { command: 'watered', description: 'Отметить полив' },
+  { command: 'help',    description: 'Показать список команд' },
+];
+
+const adminCommands = [
+  ...commonCommands,
+  { command: 'users', description: 'Список пользователей (админ)' },
+];
+
+// ── Middleware: авто-регистрация пользователя ──────────────────────────────
+bot.use(async (ctx, next) => {
+  if (ctx.from) {
+    await upsertUser(
+      ctx.from.id,
+      ctx.from.first_name,
+      ctx.from.username ?? null
+    ).catch((err) => logger.error({ err }, 'upsertUser failed'));
+  }
+  return next();
+});
+
+// ── Хендлеры ──────────────────────────────────────────────────────────────
+registerCommands(bot);
+registerCallbacks(bot);
+registerAdminHandlers(bot);
+registerGlobalMessageHandlers(bot);
+
+// ── Глобальный перехват ошибок (после всех хендлеров) ─────────────────────
 bot.catch((err) => {
   const ctx = err.ctx;
   const e = err.error;
@@ -18,9 +53,9 @@ bot.catch((err) => {
     'Error while handling update'
   );
 
-  if (e instanceof GrammyError) {        // ✅ теперь работает
+  if (e instanceof GrammyError) {
     logger.error({ description: e.description }, 'Telegram API error');
-  } else if (e instanceof HttpError) {   // ✅ теперь работает
+  } else if (e instanceof HttpError) {
     logger.error({ err: e }, 'Telegram connection error');
   } else {
     logger.error({ err: e }, 'Unknown error');
@@ -29,42 +64,19 @@ bot.catch((err) => {
   ctx?.reply('⚠️ Что-то пошло не так. Попробуй ещё раз.').catch(() => {});
 });
 
-registerCommands(bot);
-registerCallbacks(bot);
-registerAdminHandlers(bot);
-registerGlobalMessageHandlers(bot);
-
-const { requireEnvNumber } = require('./config/env');
-const adminChatId = (() => {
-  // ADMIN_CHAT_ID нужен для работы с заявками и админ-командами.
-  // Если переменная отсутствует/битая — упадем с понятной ошибкой.
-  return requireEnvNumber('ADMIN_CHAT_ID');
-})();
-
-const commonCommands = [
-  { command: 'start', description: 'Запустить бота' },
-  { command: 'menu', description: 'Открыть главное меню' },
-  { command: 'watered', description: 'Отметить полив' },
-  { command: 'help', description: 'Показать список команд' },
-];
-
-const adminCommands = [
-  ...commonCommands,
-  { command: 'users', description: 'Список пользователей (админ)' },
-];
-
+// ── Запуск ─────────────────────────────────────────────────────────────────
 (async () => {
   try {
-    // Важно: Pool сам управляет клиентом, поэтому используем query вместо connect() без release()
     await db.query('SELECT 1');
     logger.info('Database connection established');
 
-    // Показываем обычные команды всем
     await bot.api.setMyCommands(commonCommands);
 
-    // Показываем админские команды только в чате админа (scoped)
     if (adminChatId !== null) {
-      await bot.api.setMyCommands(adminCommands, { type: 'chat', chat_id: adminChatId });
+      await bot.api.setMyCommands(adminCommands, {
+        type: 'chat',
+        chat_id: adminChatId,
+      });
     }
 
     const runner = run(bot, {
