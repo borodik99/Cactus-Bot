@@ -1,9 +1,16 @@
-const { InlineKeyboard } = require('grammy');
 const { db } = require('../bot');
 const { WATERING } = require('../constants');
 const { getQueue, getQueueState, getCurrentWaterer, getNextWateringDate, joinQueue, leaveQueue, markWatered } = require('../db/queries');
-const { ensureApproved } = require('../helpers');
-const { mainKeyboard, backKeyboard } = require('../keyboards');
+const { ensureApproved, notifyNextWaterer } = require('../helpers');
+const { mainMenuHtml, backHtml, wateredHtml, nextWateringHtml } = require('../keyboards');
+const { esc, rich, sendRich } = require('../helpers/rich');
+const {
+  fmtDate,
+  fmtDateTime,
+  calendarDateIn,
+  calendarDaysDiff,
+  pluralDaysRu,
+} = require('../helpers/dates');
 
 function registerCallbacks(bot) {
 
@@ -19,17 +26,21 @@ function registerCallbacks(bot) {
     const isCurrent = current?.chat_id === chatId;
 
     await ctx.answerCallbackQuery();
-    await ctx.editMessageText(
-      `✅ *${user.name}*, ты в очереди по уходу за Максом!\n📍 Позиция: *${position + 1}* из ${len}`,
-      { parse_mode: 'Markdown', reply_markup: mainKeyboard(true, isCurrent) }
-    );
+    await ctx.editMessageText(rich(
+      `<h3>✅ Ты в очереди!</h3>` +
+      `<p><b>${esc(user.name)}</b>, ты в очереди по уходу за Максом!</p>` +
+      `<p>📍 Позиция: <b>${position + 1}</b> из ${len}</p>` +
+      mainMenuHtml(true, isCurrent)
+    ));
 
     if (len === 1) {
-      const keyboard = new InlineKeyboard().text('✅ Полил!', 'mark_watered');
-      await bot.api.sendMessage(
+      await sendRich(
         chatId,
-        `🌵 *${user.name}, ${WATERING.name}* ждёт первого полива!\n\n💧 Объём: ~${WATERING.waterLabel}\nЛей медленно по краю горшка 🪴`,
-        { parse_mode: 'Markdown', reply_markup: keyboard }
+        `<h3>🌵 Макс ждёт первого полива!</h3>` +
+        `<p><b>${esc(user.name)}</b>, кактус ещё ни разу не поливали через бота.</p>` +
+        `<p>💧 Объём: ~${WATERING.waterLabel}</p>` +
+        `<p>Лей медленно по краю горшка 🪴</p>` +
+        wateredHtml()
       );
     }
   });
@@ -53,13 +64,15 @@ function registerCallbacks(bot) {
       }
     }
 
-    const { len } = await leaveQueue(chatId);
+    await leaveQueue(chatId);
 
     await ctx.answerCallbackQuery({ text: '👋 Ты вышел из очереди' });
-    await ctx.editMessageText(
-      `👋 *${user.name}*, ты вышел из очереди.\nМожешь вернуться в любое время!`,
-      { parse_mode: 'Markdown', reply_markup: mainKeyboard(false) }
-    );
+    await ctx.editMessageText(rich(
+      `<h3>👋 Ты вышел из очереди</h3>` +
+      `<p><b>${esc(user.name)}</b>, ты вышел из очереди.</p>` +
+      `<p>Можешь вернуться в любое время!</p>` +
+      mainMenuHtml(false)
+    ));
   });
 
   bot.callbackQuery('show_queue', async (ctx) => {
@@ -70,22 +83,24 @@ function registerCallbacks(bot) {
     const queue = await getQueue();
 
     if (queue.length === 0) {
-      return ctx.editMessageText(
-        `📋 Очередь пуста.\nНажми «Участвовать в поливе», чтобы ухаживать за *${WATERING.name}*! 🌵`,
-        { parse_mode: 'Markdown', reply_markup: backKeyboard() }
-      );
+      return ctx.editMessageText(rich(
+        `<h3>📋 Очередь пуста</h3>` +
+        `<p>Нажми «Участвовать в поливе», чтобы ухаживать за <b>${WATERING.name}</b>! 🌵</p>` +
+        backHtml()
+      ));
     }
 
     const state = await getQueueState();
     const lines = queue.map((u, i) => {
       const isCurrent = i === state.current_turn % queue.length;
-      return `${isCurrent ? '💧' : `${i + 1}.`} ${u.name}${isCurrent ? ' ← сейчас' : ''}`;
-    }).join('\n');
+      return isCurrent
+        ? `<p>💧 <b>${esc(u.name)}</b> ← сейчас</p>`
+        : `<p>${i + 1}. ${esc(u.name)}</p>`;
+    }).join('');
 
-    await ctx.editMessageText(
-      `📋 *Очередь полива Макса:*\n\n${lines}`,
-      { parse_mode: 'Markdown', reply_markup: backKeyboard() }
-    );
+    await ctx.editMessageText(rich(
+      `<h3>📋 Очередь полива Макса</h3>${lines}${backHtml()}`
+    ));
   });
 
   bot.callbackQuery('show_history', async (ctx) => {
@@ -94,28 +109,28 @@ function registerCallbacks(bot) {
 
     await ctx.answerCallbackQuery();
     const res = await db.query(
-      `SELECT u.name, w.watered_at, w.water_ml
+      `SELECT u.name, w.watered_at AT TIME ZONE 'UTC' AS watered_at, w.water_ml
        FROM watering_log w
        LEFT JOIN users u ON u.id = w.user_id
        ORDER BY w.watered_at DESC LIMIT 10`
     );
 
     if (!res.rows.length) {
-      return ctx.editMessageText(
-        '📋 Макса ещё не поливали. История пуста.',
-        { reply_markup: backKeyboard() }
-      );
+      return ctx.editMessageText(rich(
+        `<h3>💧 История поливов</h3>` +
+        `<p>Макса ещё не поливали. История пуста.</p>` +
+        backHtml()
+      ));
     }
 
     const lines = res.rows.map((e, i) => {
-      const date = new Date(e.watered_at).toLocaleString('ru-RU', { timeZone: 'Europe/Minsk' });
-      return `${i + 1}. ${date} — ${e.name} (${e.water_ml} мл)`;
-    }).join('\n');
+      const date = fmtDateTime(new Date(e.watered_at));
+      return `<p>${i + 1}. ${date} — <b>${esc(e.name || '—')}</b> (${e.water_ml} мл)</p>`;
+    }).join('');
 
-    await ctx.editMessageText(
-      `💧 *История поливов Макса:*\n\n${lines}`,
-      { parse_mode: 'Markdown', reply_markup: backKeyboard() }
-    );
+    await ctx.editMessageText(rich(
+      `<h3>💧 История поливов Макса</h3>${lines}${backHtml()}`
+    ));
   });
 
   bot.callbackQuery('show_next', async (ctx) => {
@@ -127,26 +142,33 @@ function registerCallbacks(bot) {
     const current = await getCurrentWaterer();
 
     if (!nextDate) {
-      return ctx.editMessageText(
-        `💧 Макса ещё не поливали через бота.\n\n📌 Режим: каждые *~${WATERING.freq} рабочих дней*\n👤 Первым поливает: *${current?.name || 'очередь пуста'}*`,
-        { parse_mode: 'Markdown', reply_markup: backKeyboard() }
-      );
+      return ctx.editMessageText(rich(
+        `<h3>⏭ Следующий полив</h3>` +
+        `<p>Макса ещё не поливали через бота.</p>` +
+        `<p>📌 Режим: каждые <b>~${WATERING.freq} дней</b></p>` +
+        `<p>👤 Первым поливает: <b>${esc(current?.name || 'очередь пуста')}</b></p>` +
+        backHtml()
+      ));
     }
 
-    const diffMs = nextDate.getTime() - Date.now();
-    const daysLeft = Math.floor(diffMs / 86400000); // ✅ floor вместо ceil
+    const daysLeft = calendarDaysDiff(calendarDateIn(new Date()), calendarDateIn(nextDate));
 
-    if (daysLeft <= 0) {
-      await ctx.editMessageText(
-        `⚠️ Макса уже пора полить!\n👤 Очередь: *${current?.name || '—'}*`,
-        { parse_mode: 'Markdown', reply_markup: backKeyboard() }
-      );
-    } else {
-      await ctx.editMessageText(
-        `📅 Следующий полив Макса: *${nextDate.toLocaleDateString('ru-RU')}*\n⏳ Через: *${daysLeft} дн.*\n💧 Польёт: *${current?.name || '—'}* (~${WATERING.waterLabel})`,
-        { parse_mode: 'Markdown', reply_markup: backKeyboard() }
-      );
+    if (daysLeft < 1) {
+      return ctx.editMessageText(rich(
+        `<h3>⚠️ Макса уже пора полить!</h3>` +
+        `<p>👤 Очередь: <b>${esc(current?.name || '—')}</b></p>` +
+        `<p>💧 Объём: ~${WATERING.waterLabel}</p>` +
+        wateredHtml()
+      ));
     }
+
+    await ctx.editMessageText(rich(
+      `<h3>⏭ Следующий полив Макса</h3>` +
+      `<p>📅 Дата: <b>${fmtDate(nextDate)}</b></p>` +
+      `<p>⏳ Через: <b>${daysLeft} ${pluralDaysRu(daysLeft)}</b></p>` +
+      `<p>💧 Польёт: <b>${esc(current?.name || '—')}</b> (~${WATERING.waterLabel})</p>` +
+      backHtml()
+    ));
   });
 
   bot.callbackQuery('back_to_menu', async (ctx) => {
@@ -157,10 +179,10 @@ function registerCallbacks(bot) {
     const current = await getCurrentWaterer();
     const isCurrent = current?.chat_id === ctx.chat.id;
 
-    await ctx.editMessageText(
-      '🌵 Главное меню:',
-      { reply_markup: mainKeyboard(user.in_queue || false, isCurrent) }
-    );
+    await ctx.editMessageText(rich(
+      `<h3>🌵 Главное меню</h3>` +
+      mainMenuHtml(user.in_queue || false, isCurrent)
+    ));
   });
 
   bot.callbackQuery('mark_watered', async (ctx) => {
@@ -178,9 +200,9 @@ function registerCallbacks(bot) {
       const diffMs = nextDate.getTime() - Date.now();
       // Разрешаем полив если до даты меньше 24 часов или уже просрочено.
       if (diffMs > 24 * 60 * 60 * 1000) {
-        const daysLeft = Math.floor(diffMs / 86400000);
+        const daysLeft = calendarDaysDiff(calendarDateIn(new Date()), calendarDateIn(nextDate));
         return ctx.answerCallbackQuery({
-          text: `⛔ Ещё рано! Следующий полив через ${daysLeft} дн. (${nextDate.toLocaleDateString('ru-RU')})`,
+          text: `⛔ Ещё рано! Следующий полив ${fmtDate(nextDate)} (через ${daysLeft} ${pluralDaysRu(daysLeft)})`,
           show_alert: true,
         });
       }
@@ -197,25 +219,18 @@ function registerCallbacks(bot) {
 
     const nextUser = await getCurrentWaterer();
     const nextWateringDate = await getNextWateringDate();
-    const dateStr = new Date().toLocaleString('ru-RU', {
-      timeZone: 'Europe/Minsk',
-      day: '2-digit', month: '2-digit', year: 'numeric',
-      hour: '2-digit', minute: '2-digit',
-    });
+    const dateStr = fmtDateTime(new Date());
 
     await ctx.answerCallbackQuery({ text: '✅ Отмечено!' });
-    await ctx.editMessageText(
-      `✅ *${name}* полил Макса в ${dateStr} 💧\n\n📅 Следующий полив: *${nextWateringDate?.toLocaleDateString('ru-RU') || '—'}*\n👤 Польёт: *${nextUser?.name || '—'}*`,
-      { parse_mode: 'Markdown' }
-    );
+    await ctx.editMessageText(rich(
+      `<h3>✅ Полив зафиксирован</h3>` +
+      `<p><b>${esc(name)}</b> полил Макса в ${dateStr} 💧</p>` +
+      `<p>📅 Следующий полив: <b>${fmtDate(nextWateringDate)}</b></p>` +
+      `<p>👤 Польёт: <b>${esc(nextUser?.name || '—')}</b></p>` +
+      nextWateringHtml()
+    ));
 
-    if (nextUser && nextUser.chat_id !== chatId) {
-      await bot.api.sendMessage(
-        nextUser.chat_id,
-        `🔔 *${name}* только что полил Макса 💧\nГотовься — следующий полив *${nextWateringDate?.toLocaleDateString('ru-RU')}*, твоя очередь, *${nextUser.name}*! 🌵`,
-        { parse_mode: 'Markdown' }
-      ).catch(() => {});
-    }
+    await notifyNextWaterer(name, nextUser, nextWateringDate, chatId);
   });
 
   bot.callbackQuery('skip_turn', async (ctx) => {

@@ -1,10 +1,15 @@
 const { db } = require('../bot');
-const { bot } = require('../bot');
 const { WATERING } = require('../constants');
 const { getUser, getCurrentWaterer, getNextWateringDate, markWatered } = require('../db/queries');
-const { InlineKeyboard } = require('grammy');
-const { mainKeyboard } = require('../keyboards');
-const { ensureApproved } = require('../helpers');
+const { mainMenuHtml } = require('../keyboards');
+const { ensureApproved, notifyNextWaterer } = require('../helpers');
+const { esc, btn, row, sendRich } = require('../helpers/rich');
+const {
+  fmtDate,
+  calendarDateIn,
+  calendarDaysDiff,
+  pluralDaysRu,
+} = require('../helpers/dates');
 
 function registerCommands(bot) {
 
@@ -28,31 +33,33 @@ function registerCommands(bot) {
     if (adminId && Number(adminId) === chatId && user && !user.approved) {
       await db.query('UPDATE users SET approved = TRUE WHERE chat_id = $1', [chatId]);
     }
-    // Админу не нужно получать уведомление о собственном регистрации.
+    // Админу не нужно получать уведомление о собственной регистрации.
     if (adminId && !user.approved && Number(adminId) !== chatId) {
-      const keyboard = new InlineKeyboard()
-        .text('Принять', `admin_user_accept_${chatId}`)
-        .success()
-        .text('Отклонить', `admin_user_reject_${chatId}`)
-        .danger();
-
-      await bot.api.sendMessage(
+      await sendRich(
         adminId,
-        `🆕 Новый пользователь:\nID: ${chatId}\nИмя: ${name}\nUsername: @${username || '—'}\n\nВыберите действие:`,
-        { reply_markup: keyboard }
+        `<h3>🆕 Новый пользователь</h3>` +
+        `<p>ID: ${chatId}</p>` +
+        `<p>Имя: <b>${esc(name)}</b></p>` +
+        `<p>Username: ${username ? '@' + esc(username) : '—'}</p>` +
+        row([
+          btn('✅ Принять', `admin_user_accept_${chatId}`, 'success'),
+          btn('⛔ Отклонить', `admin_user_reject_${chatId}`, 'danger'),
+        ])
       ).catch(() => {});
     }
 
     const current = await getCurrentWaterer();
     const isCurrent = current?.chat_id === chatId;
 
-    await ctx.reply(
-      `👋 Привет, *${name}*! Я слежу за поливом кактуса *Макса* 🌵\n\n` +
-      `📌 Режим полива: каждые *~${WATERING.freq} рабочих дней*\n` +
-      `💧 Объём: *${WATERING.waterLabel}*\n` +
-      `🕙 Уведомление: *${WATERING.time}*\n\n` +
-      `Нажми *«Участвовать в поливе»*, чтобы встать в очередь.`,
-      { parse_mode: 'Markdown', reply_markup: mainKeyboard(user.in_queue, isCurrent) }
+    await sendRich(
+      chatId,
+      `<h3>🌵 Привет, ${esc(name)}!</h3>` +
+      `<p>Я слежу за поливом кактуса <b>Макса</b> 🌵</p>` +
+      `<p>📌 Режим полива: каждые <b>${WATERING.freq} дней</b> (~10 рабочих)</p>` +
+      `<p>💧 Объём: <b>${WATERING.waterLabel}</b></p>` +
+      `<p>🕙 Уведомление: <b>${WATERING.time}</b></p>` +
+      `<p>Нажми <b>«Участвовать в поливе»</b>, чтобы встать в очередь.</p>` +
+      mainMenuHtml(user.in_queue, isCurrent)
     );
   });
 
@@ -63,9 +70,11 @@ function registerCommands(bot) {
     const current = await getCurrentWaterer();
     const isCurrent = current?.chat_id === ctx.chat.id;
 
-    await ctx.reply('🌵 Главное меню:', {
-      reply_markup: mainKeyboard(user.in_queue || false, isCurrent),
-    });
+    await sendRich(
+      ctx.chat.id,
+      `<h3>🌵 Главное меню</h3>` +
+      mainMenuHtml(user.in_queue || false, isCurrent)
+    );
   });
 
   bot.command('help', async (ctx) => {
@@ -105,29 +114,7 @@ function registerCommands(bot) {
 
     if (!res.rows.length) return ctx.reply('Пользователей в базе пока нет.');
 
-    const lines = res.rows.map((u, i) => {
-      const status = (u.approved ? '✅' : '⛔') + (u.in_queue ? `, очередь #${u.queue_position + 1}` : '');
-      const uname = u.username ? '@' + u.username : '—';
-      return `${i + 1}. ${u.name} (${uname})\n   ID: ${u.chat_id}\n   ${status}`;
-    }).join('\n\n');
-
-    const keyboard = new InlineKeyboard();
-    for (const u of res.rows) {
-      // approved=true означает "доступ разрешён" -> админ должен видеть "заблокировать".
-      if (!u.approved) {
-        keyboard
-          .text(`✅ Разблокировать: ${u.name}`, `admin_user_unblock_${u.chat_id}`)
-          .success()
-          .row();
-      } else {
-        keyboard
-          .text(`⛔ Заблокировать: ${u.name}`, `admin_user_block_${u.chat_id}`)
-          .danger()
-          .row();
-      }
-    }
-
-    await ctx.reply(`📋 Пользователи:\n\n${lines}`, { reply_markup: keyboard });
+    await sendRich(ctx.chat.id, usersListHtml(res.rows));
   });
 
   bot.command('watered', async (ctx) => {
@@ -145,10 +132,9 @@ function registerCommands(bot) {
       const diffMs = nextDate.getTime() - Date.now();
       // Запрещаем ранний полив, если до даты ещё больше 24 часов.
       if (diffMs > 24 * 60 * 60 * 1000) {
-        const daysLeft = Math.floor(diffMs / 86400000);
+        const daysLeft = calendarDaysDiff(calendarDateIn(new Date()), calendarDateIn(nextDate));
         return ctx.reply(
-          `⛔ Ещё рано! Следующий полив через *${daysLeft} дн.* (${nextDate.toLocaleDateString('ru-RU')})`,
-          { parse_mode: 'Markdown' }
+          `⛔ Ещё рано! Следующий полив ${fmtDate(nextDate)} (через ${daysLeft} ${pluralDaysRu(daysLeft)})`
         );
       }
     }
@@ -163,13 +149,38 @@ function registerCommands(bot) {
     const nextUser = await getCurrentWaterer();
     const nextWateringDate = await getNextWateringDate();
 
-    await ctx.reply(
-      `✅ *${name}* полил Макса 💧\n` +
-      `📅 Следующий полив: *${nextWateringDate?.toLocaleDateString('ru-RU') || '—'}*\n` +
-      `👤 Следующий: *${nextUser?.name || '—'}*`,
-      { parse_mode: 'Markdown' }
+    await sendRich(
+      ctx.chat.id,
+      `<h3>✅ Полив зафиксирован</h3>` +
+      `<p><b>${esc(name)}</b> полил Макса 💧</p>` +
+      `<p>📅 Следующий полив: <b>${fmtDate(nextWateringDate)}</b></p>` +
+      `<p>👤 Следующий: <b>${esc(nextUser?.name || '—')}</b></p>`
     );
+
+    // Следующий участник должен узнать, что теперь его очередь
+    await notifyNextWaterer(name, nextUser, nextWateringDate, ctx.chat.id);
   });
 }
 
-module.exports = { registerCommands };
+// HTML-список пользователей с кнопками блокировки/разблокировки (для админа)
+function usersListHtml(rows) {
+  const lines = rows.map((u, i) => {
+    const status = (u.approved ? '✅' : '⛔') + (u.in_queue ? `, очередь #${u.queue_position + 1}` : '');
+    const uname = u.username ? '@' + esc(u.username) : '—';
+    return (
+      `<p>${i + 1}. <b>${esc(u.name)}</b> (${uname})<br>` +
+      `ID: ${u.chat_id}<br>${status}</p>`
+    );
+  }).join('');
+
+  const rowsHtml = rows.map((u) => {
+    // approved=true означает "доступ разрешён" -> админ должен видеть "заблокировать".
+    return u.approved
+      ? row([btn(`⛔ Заблокировать: ${u.name}`, `admin_user_block_${u.chat_id}`, 'danger')])
+      : row([btn(`✅ Разблокировать: ${u.name}`, `admin_user_unblock_${u.chat_id}`, 'success')]);
+  }).join('');
+
+  return `<h3>📋 Пользователи</h3>${lines}${rowsHtml}`;
+}
+
+module.exports = { registerCommands, usersListHtml };
