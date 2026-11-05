@@ -1,6 +1,6 @@
 const { InlineKeyboard } = require('grammy');
 const { getUser } = require('../db/queries');
-const { getQueueState, setCurrentTurn, getCurrentWaterer } = require('../db/queries');
+const { getQueueState, setCurrentTurn, getCurrentWaterer, leaveQueue } = require('../db/queries');
 const { WATERING } = require('../constants');
 const { db } = require('../bot');
 
@@ -45,24 +45,12 @@ function registerAdminHandlers(bot) {
       return ctx.answerCallbackQuery({ text: 'Пользователь не найден', show_alert: true });
     }
 
-    const leavingPosition = targetUser.in_queue ? targetUser.queue_position : null;
-
+    // Убираем из очереди с корректным пересчётом хода (current_turn)
+    await leaveQueue(targetId);
     await db.query(
-      'UPDATE users SET approved = FALSE, in_queue = FALSE, queue_position = NULL, waiting_skip_reason = FALSE WHERE chat_id = $1',
+      'UPDATE users SET approved = FALSE, waiting_skip_reason = FALSE WHERE chat_id = $1',
       [targetId]
     );
-
-    // На случай, если пользователь уже успел попасть в очередь (например, если админ отклоняет старую заявку).
-    if (leavingPosition !== null && leavingPosition !== undefined) {
-      await db.query(
-        'UPDATE users SET queue_position = queue_position - 1 WHERE in_queue = TRUE AND queue_position > $1',
-        [leavingPosition]
-      );
-      const lenRes = await db.query('SELECT COUNT(*)::int AS len FROM users WHERE in_queue = TRUE');
-      const len = Number(lenRes.rows[0]?.len ?? 0);
-      const state = await getQueueState();
-      if (len > 0 && Number(state.current_turn) >= len) await setCurrentTurn(0);
-    }
 
     await ctx.answerCallbackQuery({ text: 'Отклонено' });
     await ctx.editMessageText(`❌ Отклонено: ${targetUser.name}\nID: ${targetId}`).catch(() => {});
@@ -121,29 +109,12 @@ function registerAdminHandlers(bot) {
     const targetUser = await getUser(targetId);
     if (!targetUser) return ctx.answerCallbackQuery({ text: 'Пользователь не найден', show_alert: true });
 
-    const leavingPosition = targetUser.in_queue ? targetUser.queue_position : null;
-
+    // Убираем из очереди с корректным пересчётом хода (current_turn)
+    await leaveQueue(targetId);
     await db.query(
-      'UPDATE users SET approved = FALSE, in_queue = FALSE, queue_position = NULL, waiting_skip_reason = FALSE WHERE chat_id = $1',
+      'UPDATE users SET approved = FALSE, waiting_skip_reason = FALSE WHERE chat_id = $1',
       [targetId]
     );
-
-    if (leavingPosition !== null && leavingPosition !== undefined) {
-      await db.query(
-        'UPDATE users SET queue_position = queue_position - 1 WHERE in_queue = TRUE AND queue_position > $1',
-        [leavingPosition]
-      );
-
-      const lenRes = await db.query('SELECT COUNT(*)::int AS len FROM users WHERE in_queue = TRUE');
-      const len = Number(lenRes.rows[0]?.len ?? 0);
-      const state = await getQueueState();
-      const cur = Number(state.current_turn ?? 0);
-      if (len <= 0) {
-        await setCurrentTurn(0);
-      } else {
-        await setCurrentTurn(cur % len);
-      }
-    }
 
     await ctx.answerCallbackQuery({ text: 'Пользователь заблокирован' });
     await renderUsersInline(ctx);
@@ -214,6 +185,15 @@ function registerAdminHandlers(bot) {
     );
     const len = Number(lenRes.rows[0]?.len ?? 0);
     if (len <= 0) return ctx.answerCallbackQuery({ text: 'Очередь пуста.' });
+
+    // Запрос мог устареть: проверяем, что очередь всё ещё на запрашивающем
+    const currentBeforeSkip = await getCurrentWaterer();
+    if (!currentBeforeSkip || currentBeforeSkip.chat_id !== targetId) {
+      return ctx.answerCallbackQuery({
+        text: 'Очередь уже изменилась — запрос устарел.',
+        show_alert: true,
+      });
+    }
 
     await setCurrentTurn((Number(state.current_turn) + 1) % len);
 

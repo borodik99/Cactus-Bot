@@ -2,8 +2,15 @@ const { InlineKeyboard } = require('grammy');
 const { db } = require('../bot');
 const { WATERING } = require('../constants');
 const { getQueue, getQueueState, getCurrentWaterer, getNextWateringDate, joinQueue, leaveQueue, markWatered } = require('../db/queries');
-const { ensureApproved } = require('../helpers');
+const { ensureApproved, notifyNextWaterer } = require('../helpers');
 const { mainKeyboard, backKeyboard } = require('../keyboards');
+const {
+  fmtDate,
+  fmtDateTime,
+  calendarDateIn,
+  calendarDaysDiff,
+  pluralDaysRu,
+} = require('../helpers/dates');
 
 function registerCallbacks(bot) {
 
@@ -94,7 +101,7 @@ function registerCallbacks(bot) {
 
     await ctx.answerCallbackQuery();
     const res = await db.query(
-      `SELECT u.name, w.watered_at, w.water_ml
+      `SELECT u.name, w.watered_at AT TIME ZONE 'UTC' AS watered_at, w.water_ml
        FROM watering_log w
        LEFT JOIN users u ON u.id = w.user_id
        ORDER BY w.watered_at DESC LIMIT 10`
@@ -108,7 +115,7 @@ function registerCallbacks(bot) {
     }
 
     const lines = res.rows.map((e, i) => {
-      const date = new Date(e.watered_at).toLocaleString('ru-RU', { timeZone: 'Europe/Minsk' });
+      const date = fmtDateTime(new Date(e.watered_at));
       return `${i + 1}. ${date} — ${e.name} (${e.water_ml} мл)`;
     }).join('\n');
 
@@ -133,17 +140,16 @@ function registerCallbacks(bot) {
       );
     }
 
-    const diffMs = nextDate.getTime() - Date.now();
-    const daysLeft = Math.floor(diffMs / 86400000); // ✅ floor вместо ceil
+    const daysLeft = calendarDaysDiff(calendarDateIn(new Date()), calendarDateIn(nextDate));
 
-    if (daysLeft <= 0) {
+    if (daysLeft < 1) {
       await ctx.editMessageText(
         `⚠️ Макса уже пора полить!\n👤 Очередь: *${current?.name || '—'}*`,
         { parse_mode: 'Markdown', reply_markup: backKeyboard() }
       );
     } else {
       await ctx.editMessageText(
-        `📅 Следующий полив Макса: *${nextDate.toLocaleDateString('ru-RU')}*\n⏳ Через: *${daysLeft} дн.*\n💧 Польёт: *${current?.name || '—'}* (~${WATERING.waterLabel})`,
+        `📅 Следующий полив Макса: *${fmtDate(nextDate)}*\n⏳ Через: *${daysLeft} ${pluralDaysRu(daysLeft)}*\n💧 Польёт: *${current?.name || '—'}* (~${WATERING.waterLabel})`,
         { parse_mode: 'Markdown', reply_markup: backKeyboard() }
       );
     }
@@ -178,9 +184,9 @@ function registerCallbacks(bot) {
       const diffMs = nextDate.getTime() - Date.now();
       // Разрешаем полив если до даты меньше 24 часов или уже просрочено.
       if (diffMs > 24 * 60 * 60 * 1000) {
-        const daysLeft = Math.floor(diffMs / 86400000);
+        const daysLeft = calendarDaysDiff(calendarDateIn(new Date()), calendarDateIn(nextDate));
         return ctx.answerCallbackQuery({
-          text: `⛔ Ещё рано! Следующий полив через ${daysLeft} дн. (${nextDate.toLocaleDateString('ru-RU')})`,
+          text: `⛔ Ещё рано! Следующий полив ${fmtDate(nextDate)} (через ${daysLeft} ${pluralDaysRu(daysLeft)})`,
           show_alert: true,
         });
       }
@@ -197,25 +203,15 @@ function registerCallbacks(bot) {
 
     const nextUser = await getCurrentWaterer();
     const nextWateringDate = await getNextWateringDate();
-    const dateStr = new Date().toLocaleString('ru-RU', {
-      timeZone: 'Europe/Minsk',
-      day: '2-digit', month: '2-digit', year: 'numeric',
-      hour: '2-digit', minute: '2-digit',
-    });
+    const dateStr = fmtDateTime(new Date());
 
     await ctx.answerCallbackQuery({ text: '✅ Отмечено!' });
     await ctx.editMessageText(
-      `✅ *${name}* полил Макса в ${dateStr} 💧\n\n📅 Следующий полив: *${nextWateringDate?.toLocaleDateString('ru-RU') || '—'}*\n👤 Польёт: *${nextUser?.name || '—'}*`,
+      `✅ *${name}* полил Макса в ${dateStr} 💧\n\n📅 Следующий полив: *${fmtDate(nextWateringDate)}*\n👤 Польёт: *${nextUser?.name || '—'}*`,
       { parse_mode: 'Markdown' }
     );
 
-    if (nextUser && nextUser.chat_id !== chatId) {
-      await bot.api.sendMessage(
-        nextUser.chat_id,
-        `🔔 *${name}* только что полил Макса 💧\nГотовься — следующий полив *${nextWateringDate?.toLocaleDateString('ru-RU')}*, твоя очередь, *${nextUser.name}*! 🌵`,
-        { parse_mode: 'Markdown' }
-      ).catch(() => {});
-    }
+    await notifyNextWaterer(name, nextUser, nextWateringDate, chatId);
   });
 
   bot.callbackQuery('skip_turn', async (ctx) => {

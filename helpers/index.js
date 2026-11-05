@@ -1,5 +1,6 @@
 const { getUser } = require('../db/queries');
-const { db } = require('../bot');
+const { db, bot } = require('../bot');
+const { fmtDate } = require('./dates');
 
 const adminId = (() => {
   const raw = process.env.ADMIN_CHAT_ID;
@@ -26,4 +27,18 @@ async function ensureApproved(ctx) {
   return user;
 }
 
-module.exports = { ensureApproved };
+// Сообщаем следующему участнику очереди, что теперь его очередь.
+// skipChatId — тот, кто только что полил (сам себе не сообщаем).
+async function notifyNextWaterer(prevName, nextUser, nextDate, skipChatId) {
+  if (!nextUser || nextUser.chat_id === skipChatId) return;
+  await bot.api
+    .sendMessage(
+      nextUser.chat_id,
+      `🔔 *${prevName}* только что полил Макса 💧\n` +
+      `Готовься — следующий полив *${fmtDate(nextDate)}*, твоя очередь, *${nextUser.name}*! 🌵`,
+      { parse_mode: 'Markdown' }
+    )
+    .catch(() => {});
+}
+
+module.exports = { ensureApproved, notifyNextWaterer };

@@ -4,7 +4,13 @@ const { WATERING } = require('../constants');
 const { getUser, getCurrentWaterer, getNextWateringDate, markWatered } = require('../db/queries');
 const { InlineKeyboard } = require('grammy');
 const { mainKeyboard } = require('../keyboards');
-const { ensureApproved } = require('../helpers');
+const { ensureApproved, notifyNextWaterer } = require('../helpers');
+const {
+  fmtDate,
+  calendarDateIn,
+  calendarDaysDiff,
+  pluralDaysRu,
+} = require('../helpers/dates');
 
 function registerCommands(bot) {
 
@@ -48,7 +54,7 @@ function registerCommands(bot) {
 
     await ctx.reply(
       `👋 Привет, *${name}*! Я слежу за поливом кактуса *Макса* 🌵\n\n` +
-      `📌 Режим полива: каждые *~${WATERING.freq} рабочих дней*\n` +
+      `📌 Режим полива: каждые *${WATERING.freq} дней* (~10 рабочих)\n` +
       `💧 Объём: *${WATERING.waterLabel}*\n` +
       `🕙 Уведомление: *${WATERING.time}*\n\n` +
       `Нажми *«Участвовать в поливе»*, чтобы встать в очередь.`,
@@ -145,9 +151,9 @@ function registerCommands(bot) {
       const diffMs = nextDate.getTime() - Date.now();
       // Запрещаем ранний полив, если до даты ещё больше 24 часов.
       if (diffMs > 24 * 60 * 60 * 1000) {
-        const daysLeft = Math.floor(diffMs / 86400000);
+        const daysLeft = calendarDaysDiff(calendarDateIn(new Date()), calendarDateIn(nextDate));
         return ctx.reply(
-          `⛔ Ещё рано! Следующий полив через *${daysLeft} дн.* (${nextDate.toLocaleDateString('ru-RU')})`,
+          `⛔ Ещё рано! Следующий полив *${fmtDate(nextDate)}* (через ${daysLeft} ${pluralDaysRu(daysLeft)})`,
           { parse_mode: 'Markdown' }
         );
       }
@@ -165,10 +171,13 @@ function registerCommands(bot) {
 
     await ctx.reply(
       `✅ *${name}* полил Макса 💧\n` +
-      `📅 Следующий полив: *${nextWateringDate?.toLocaleDateString('ru-RU') || '—'}*\n` +
+      `📅 Следующий полив: *${fmtDate(nextWateringDate)}*\n` +
       `👤 Следующий: *${nextUser?.name || '—'}*`,
       { parse_mode: 'Markdown' }
     );
+
+    // Следующий участник должен узнать, что теперь его очередь
+    await notifyNextWaterer(name, nextUser, nextWateringDate, ctx.chat.id);
   });
 }
 

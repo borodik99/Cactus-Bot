@@ -1,6 +1,7 @@
 const { db } = require('../bot');
 const { logger } = require('../config/logger');
 const { WATERING } = require('../constants');
+const { calendarDateIn, atLocalTime } = require('../helpers/dates');
 
 async function upsertUser(chatId, firstName, username) {
   const userChatId = Number(chatId);
@@ -56,18 +57,41 @@ async function getCurrentWaterer() {
 }
 
 async function getNextWateringDate() {
+  // Читаем наивный таймстемп как UTC: `AT TIME ZONE 'UTC'` вернёт timestamptz,
+  // который node-pg парсит в абсолютный момент независимо от TZ процесса Node.
   const res = await db.query(
-    'SELECT watered_at FROM watering_log ORDER BY watered_at DESC LIMIT 1'
+    `SELECT watered_at AT TIME ZONE 'UTC' AS watered_utc
+     FROM watering_log
+     ORDER BY watered_at DESC
+     LIMIT 1`
   );
   if (!res.rows[0]) return null;
-  const lastDate = new Date(res.rows[0].watered_at);
-  const next = new Date(lastDate);
-  next.setDate(next.getDate() + WATERING.freq);
-  const day = next.getDay();
-  if (day === 6) next.setDate(next.getDate() + 2);
-  if (day === 0) next.setDate(next.getDate() + 1);
-  next.setUTCHours(7, 0, 0, 0);
-  return next;
+
+  // Дальше считаем по календарным дням Минска: +freq дней ко дню полива,
+  // выходные (Сб/Вс) сдвигаются на понедельник, уведомление — в 10:00.
+  const lastDay = calendarDateIn(new Date(res.rows[0].watered_utc));
+  const day = new Date(`${lastDay}T00:00:00.000Z`);
+  day.setUTCDate(day.getUTCDate() + WATERING.freq);
+  const dow = day.getUTCDay();
+  if (dow === 6) day.setUTCDate(day.getUTCDate() + 2);
+  else if (dow === 0) day.setUTCDate(day.getUTCDate() + 1);
+  return atLocalTime(day, 10, 0);
+}
+
+// Когда последний раз cron отправлял уведомление (абсолютный момент)
+async function getLastNotifiedAt() {
+  const res = await db.query(
+    `SELECT last_notified_at AT TIME ZONE 'UTC' AS ts
+     FROM queue_state WHERE id = 1`
+  );
+  const ts = res.rows[0]?.ts;
+  return ts ? new Date(ts) : null;
+}
+
+async function markNotifiedNow() {
+  await db.query(
+    `UPDATE queue_state SET last_notified_at = (now() AT TIME ZONE 'UTC') WHERE id = 1`
+  );
 }
 
 async function rotateQueue(wateredChatId) {
@@ -106,10 +130,10 @@ async function rotateQueue(wateredChatId) {
       'UPDATE users SET queue_position = $1 WHERE in_queue = TRUE AND chat_id = $2',
       [len - 1, wateredId]
     );
-    await client.query(
-      'UPDATE queue_state SET current_turn = CASE WHEN current_turn >= $1 THEN 0 ELSE current_turn END WHERE id = 1',
-      [len]
-    );
+    // Поливший уходит в конец, остальные сдвигаются вверх — следующий
+    // оказывается на его месте. Если поливал последний — следующим становится первый.
+    const nextTurn = idx === len - 1 ? 0 : idx;
+    await client.query('UPDATE queue_state SET current_turn = $1 WHERE id = 1', [nextTurn]);
     await client.query('COMMIT');
   } catch (err) {
     try { await client.query('ROLLBACK'); } catch {}
@@ -171,7 +195,11 @@ async function leaveQueue(chatId) {
     );
     const lenRes = await client.query('SELECT COUNT(*)::int AS len FROM users WHERE in_queue = TRUE');
     const len = Number(lenRes.rows[0]?.len ?? 0);
-    const nextTurn = len <= 0 ? 0 : currentTurn >= len ? 0 : currentTurn;
+    // Если вышел участник перед текущим — текущий сдвигается на позицию вверх.
+    // Если вышел сам текущий последним — следующим становится первый (0).
+    let nextTurn = currentTurn;
+    if (Number(leavingPosition) < currentTurn) nextTurn -= 1;
+    if (len <= 0 || nextTurn < 0 || nextTurn >= len) nextTurn = 0;
     await client.query('UPDATE queue_state SET current_turn = $1 WHERE id = 1', [nextTurn]);
     await client.query('COMMIT');
     logger.info({ chatId: userChatId, len }, 'queue left');
@@ -213,8 +241,10 @@ async function markWatered(wateredChatId, waterMl) {
     const wateredPos = Number(currentUser.queue_position);
     const userId = Number(currentUser.id); // ← используем users.id (serial)
 
+    // Пишем время полива в UTC явно — не зависимо от таймзоны сессии Postgres
     await client.query(
-      'INSERT INTO watering_log (user_id, water_ml) VALUES ($1, $2)',
+      `INSERT INTO watering_log (user_id, water_ml, watered_at)
+       VALUES ($1, $2, (now() AT TIME ZONE 'UTC'))`,
       [userId, waterAmount]
     );
 
@@ -232,10 +262,10 @@ async function markWatered(wateredChatId, waterMl) {
       'UPDATE users SET queue_position = $1 WHERE in_queue = TRUE AND chat_id = $2',
       [len - 1, wateredId]
     );
-    await client.query(
-      'UPDATE queue_state SET current_turn = CASE WHEN current_turn >= $1 THEN 0 ELSE current_turn END WHERE id = 1',
-      [len]
-    );
+    // Поливший уходит в конец, остальные сдвигаются вверх — следующий
+    // оказывается на его месте. Если поливал последний — следующим становится первый.
+    const nextTurn = idx === len - 1 ? 0 : idx;
+    await client.query('UPDATE queue_state SET current_turn = $1 WHERE id = 1', [nextTurn]);
     await client.query('COMMIT');
     logger.info({ chatId: wateredId, len }, 'water marked and queue rotated');
     return true;
@@ -255,6 +285,8 @@ module.exports = {
   setCurrentTurn,
   getCurrentWaterer,
   getNextWateringDate,
+  getLastNotifiedAt,
+  markNotifiedNow,
   joinQueue,
   leaveQueue,
   markWatered,

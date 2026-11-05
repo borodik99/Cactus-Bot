@@ -6,16 +6,16 @@ CREATE TABLE users (
     username       TEXT,
     in_queue       BOOLEAN DEFAULT FALSE,
     queue_position INT,
-    approved       BOOLEAN DEFAULT FALSE, 
+    approved       BOOLEAN DEFAULT FALSE,
     waiting_skip_reason  BOOLEAN DEFAULT FALSE,
-    created_at     TIMESTAMP DEFAULT NOW()
+    created_at     TIMESTAMP DEFAULT (now() AT TIME ZONE 'UTC')
 );
 
 -- История поливов
 CREATE TABLE watering_log (
     id          SERIAL PRIMARY KEY,
     user_id     INT REFERENCES users(id) ON DELETE SET NULL,
-    watered_at  TIMESTAMP DEFAULT NOW(),  -- когда полили
+    watered_at  TIMESTAMP DEFAULT (now() AT TIME ZONE 'UTC'),  -- когда полили (UTC)
     water_ml    INT DEFAULT 70,           -- сколько мл вылито
     note        TEXT                      -- комментарий (опционально)
 );
