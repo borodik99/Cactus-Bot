@@ -1,8 +1,10 @@
-const { InlineKeyboard } = require('grammy');
 const { getUser } = require('../db/queries');
 const { getQueueState, setCurrentTurn, getCurrentWaterer, leaveQueue } = require('../db/queries');
 const { WATERING } = require('../constants');
 const { db } = require('../bot');
+const { usersListHtml } = require('./commands');
+const { wateredHtml } = require('../keyboards');
+const { esc, btn, row, rich, sendRich } = require('../helpers/rich');
 
 function registerAdminHandlers(bot) {
   bot.callbackQuery(/^admin_user_accept_(\d+)$/, async (ctx) => {
@@ -19,14 +21,18 @@ function registerAdminHandlers(bot) {
 
     if (targetUser.approved) {
       await ctx.answerCallbackQuery({ text: 'Уже одобрен' });
-      await ctx.editMessageText(`✅ ${targetUser.name} уже одобрен.\nID: ${targetId}`).catch(() => {});
+      await ctx.editMessageText(rich(
+        `<h3>✅ Уже одобрен</h3><p><b>${esc(targetUser.name)}</b><br>ID: ${targetId}</p>`
+      )).catch(() => {});
       return;
     }
 
     await db.query('UPDATE users SET approved = TRUE, waiting_skip_reason = FALSE WHERE chat_id = $1', [targetId]);
 
     await ctx.answerCallbackQuery({ text: 'Одобрено' });
-    await ctx.editMessageText(`✅ Одобрено: ${targetUser.name}\nID: ${targetId}`).catch(() => {});
+    await ctx.editMessageText(rich(
+      `<h3>✅ Одобрен</h3><p><b>${esc(targetUser.name)}</b><br>ID: ${targetId}</p>`
+    )).catch(() => {});
 
     await bot.api
       .sendMessage(targetId, '✅ Твоя заявка одобрена! Можешь пользоваться меню и очередью 🌵')
@@ -53,7 +59,9 @@ function registerAdminHandlers(bot) {
     );
 
     await ctx.answerCallbackQuery({ text: 'Отклонено' });
-    await ctx.editMessageText(`❌ Отклонено: ${targetUser.name}\nID: ${targetId}`).catch(() => {});
+    await ctx.editMessageText(rich(
+      `<h3>❌ Отклонён</h3><p><b>${esc(targetUser.name)}</b><br>ID: ${targetId}</p>`
+    )).catch(() => {});
 
     await bot.api
       .sendMessage(targetId, '⛔ Твой доступ к боту отклонён администратором. Пожалуйста, попробуй позже 🌵')
@@ -69,33 +77,11 @@ function registerAdminHandlers(bot) {
     );
 
     if (!res.rows.length) {
-      return ctx.editMessageText('Пользователей в базе пока нет.').catch(() => {});
-    }
-
-    const lines = res.rows.map((u, i) => {
-      const status = (u.approved ? '✅' : '⛔') + (u.in_queue ? `, очередь #${u.queue_position + 1}` : '');
-      const uname = u.username ? '@' + u.username : '—';
-      return `${i + 1}. ${u.name} (${uname})\n   ID: ${u.chat_id}\n   ${status}`;
-    }).join('\n\n');
-
-    const keyboard = new InlineKeyboard();
-    for (const u of res.rows) {
-      // approved=true означает "доступ разрешён", значит кнопку нужно показывать как "заблокировать".
-      if (!u.approved) {
-        keyboard
-          .text(`✅ Разблокировать: ${u.name}`, `admin_user_unblock_${u.chat_id}`)
-          .success()
-          .row();
-      } else {
-        keyboard
-          .text(`⛔ Заблокировать: ${u.name}`, `admin_user_block_${u.chat_id}`)
-          .danger()
-          .row();
-      }
+      return ctx.editMessageText(rich(`<h3>📋 Пользователи</h3><p>Пользователей в базе пока нет.</p>`)).catch(() => {});
     }
 
     return ctx
-      .editMessageText(`📋 Пользователи:\n\n${lines}`, { reply_markup: keyboard })
+      .editMessageText(rich(usersListHtml(res.rows)))
       .catch(() => {});
   }
 
@@ -161,14 +147,15 @@ function registerAdminHandlers(bot) {
     const adminId = process.env.ADMIN_CHAT_ID;
     if (!adminId) return;
 
-    const keyboard = new InlineKeyboard()
-      .text('✅ Передать очередь', `admin_skip_${ctx.chat.id}`)
-      .text('❌ Отклонить', `admin_deny_${ctx.chat.id}`);
-
-    await bot.api.sendMessage(
+    await sendRich(
       adminId,
-      `⏩ Запрос на пропуск очереди:\n\nИмя: ${user.name}\nID: ${ctx.chat.id}\nПричина: ${reason}`,
-      { reply_markup: keyboard }
+      `<h3>⏩ Запрос на пропуск очереди</h3>` +
+      `<p>Имя: <b>${esc(user.name)}</b><br>ID: ${ctx.chat.id}</p>` +
+      `<p>Причина: ${esc(reason)}</p>` +
+      row([
+        btn('✅ Передать очередь', `admin_skip_${ctx.chat.id}`, 'success'),
+        btn('❌ Отклонить', `admin_deny_${ctx.chat.id}`, 'danger'),
+      ])
     ).catch(() => {});
 
     await ctx.reply('✅ Запрос отправлен админу. Ожидай решения.');
@@ -200,16 +187,18 @@ function registerAdminHandlers(bot) {
     const nextUser = await getCurrentWaterer();
 
     await ctx.answerCallbackQuery({ text: 'Очередь передана.' });
-    await ctx.editMessageText('✅ Одобрено. Очередь передана следующему.');
+    await ctx.editMessageText(rich(`<h3>✅ Одобрено</h3><p>Очередь передана следующему.</p>`));
 
     await bot.api.sendMessage(targetId, '✅ Твой запрос на пропуск одобрен. Очередь передана следующему.').catch(() => {});
 
     if (nextUser) {
-      const keyboard = new InlineKeyboard().text('✅ Полил!', 'mark_watered');
-      await bot.api.sendMessage(
+      await sendRich(
         nextUser.chat_id,
-        `🌵 *${nextUser.name}, теперь твоя очередь поливать Макса!*\n\n💧 Объём: ~${WATERING.waterLabel}\nЛей медленно по краю горшка 🪴`,
-        { parse_mode: 'Markdown', reply_markup: keyboard }
+        `<h3>🌵 Теперь твоя очередь поливать Макса!</h3>` +
+        `<p><b>${esc(nextUser.name)}</b>, очередь перешла к тебе.</p>` +
+        `<p>💧 Объём: ~${WATERING.waterLabel}</p>` +
+        `<p>Лей медленно по краю горшка 🪴</p>` +
+        wateredHtml()
       ).catch(() => {});
     }
   });
@@ -221,7 +210,7 @@ function registerAdminHandlers(bot) {
     const targetId = Number(ctx.match[1]);
 
     await ctx.answerCallbackQuery({ text: 'Отклонено.' });
-    await ctx.editMessageText('❌ Отклонено. Очередь не изменена.');
+    await ctx.editMessageText(rich(`<h3>❌ Отклонено</h3><p>Очередь не изменена.</p>`));
 
     await bot.api.sendMessage(targetId, '❌ Твой запрос на пропуск отклонён администратором. Пожалуйста, полей Макса 🌵').catch(() => {});
   });

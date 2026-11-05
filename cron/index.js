@@ -1,5 +1,4 @@
 const cron = require('node-cron');
-const { InlineKeyboard } = require('grammy');
 const { bot } = require('../bot');
 const { WATERING } = require('../constants');
 const {
@@ -9,6 +8,8 @@ const {
   markNotifiedNow,
 } = require('../db/queries');
 const { logger } = require('../config/logger');
+const { wateredHtml } = require('../keyboards');
+const { esc, rich } = require('../helpers/rich');
 const {
   TZ,
   calendarDateIn,
@@ -16,8 +17,6 @@ const {
   fmtDate,
   pluralDaysRu,
 } = require('../helpers/dates');
-
-const wateredKeyboard = new InlineKeyboard().text('✅ Полил!', 'mark_watered');
 
 // Одна проверка: решаем, пора ли слать уведомление текущему участнику очереди.
 async function checkAndNotify() {
@@ -27,30 +26,34 @@ async function checkAndNotify() {
   const nextDate = await getNextWateringDate();
   const today = calendarDateIn(new Date());
 
-  let text;
+  let html;
   if (!nextDate) {
     // Макса ещё ни разу не поливали через бота — напоминаем текущему участнику.
-    text =
-      `🌵 *${current.name}, Макс ждёт первого полива!*\n\n` +
-      `💧 Объём: ~${WATERING.waterLabel}\n` +
-      `Лей медленно по краю горшка 🪴`;
+    html =
+      `<h3>🌵 Макс ждёт первого полива!</h3>` +
+      `<p><b>${esc(current.name)}</b>, кактус ещё ни разу не поливали через бота.</p>` +
+      `<p>💧 Объём: ~${WATERING.waterLabel}</p>` +
+      `<p>Лей медленно по краю горшка 🪴</p>` +
+      wateredHtml();
   } else {
     if (Date.now() < nextDate.getTime()) return; // срок ещё не наступил
 
     const overdueDays = calendarDaysDiff(calendarDateIn(nextDate), today);
     if (overdueDays <= 0) {
       // Сегодня день полива (10:00 по Минску уже наступило)
-      text =
-        `🌵 *${current.name}, пора полить Макса!*\n\n` +
-        `💧 Объём: ~${WATERING.waterLabel}\n` +
-        `Лей медленно по краю горшка 🪴`;
+      html =
+        `<h3>🌵 ${esc(current.name)}, пора полить Макса!</h3>` +
+        `<p>💧 Объём: ~${WATERING.waterLabel}</p>` +
+        `<p>Лей медленно по краю горшка 🪴</p>` +
+        wateredHtml();
     } else {
       const when = overdueDays === 1 ? 'вчера' : `${overdueDays} ${pluralDaysRu(overdueDays)} назад`;
-      text =
-        `⚠️ *${current.name}, Макс до сих пор не полит!*\n\n` +
-        `Плановая дата (*${fmtDate(nextDate)}*) была ${when} 🌵\n` +
-        `💧 Объём: ~${WATERING.waterLabel}\n` +
-        `Лей медленно по краю горшка 🪴`;
+      html =
+        `<h3>⚠️ ${esc(current.name)}, Макс до сих пор не полит!</h3>` +
+        `<p>Плановая дата (<b>${fmtDate(nextDate)}</b>) была ${when} 🌵</p>` +
+        `<p>💧 Объём: ~${WATERING.waterLabel}</p>` +
+        `<p>Лей медленно по краю горшка 🪴</p>` +
+        wateredHtml();
     }
   }
 
@@ -58,10 +61,7 @@ async function checkAndNotify() {
   const lastNotified = await getLastNotifiedAt();
   if (lastNotified && calendarDateIn(lastNotified) === today) return;
 
-  await bot.api.sendMessage(current.chat_id, text, {
-    parse_mode: 'Markdown',
-    reply_markup: wateredKeyboard,
-  });
+  await bot.api.sendRichMessage(current.chat_id, rich(html));
   await markNotifiedNow();
 }
 

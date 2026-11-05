@@ -1,6 +1,8 @@
 const { getUser } = require('../db/queries');
-const { db, bot } = require('../bot');
+const { db } = require('../bot');
 const { fmtDate } = require('./dates');
+const { esc, sendRich } = require('./rich');
+const { nextWateringHtml } = require('../keyboards');
 
 const adminId = (() => {
   const raw = process.env.ADMIN_CHAT_ID;
@@ -31,14 +33,13 @@ async function ensureApproved(ctx) {
 // skipChatId — тот, кто только что полил (сам себе не сообщаем).
 async function notifyNextWaterer(prevName, nextUser, nextDate, skipChatId) {
   if (!nextUser || nextUser.chat_id === skipChatId) return;
-  await bot.api
-    .sendMessage(
-      nextUser.chat_id,
-      `🔔 *${prevName}* только что полил Макса 💧\n` +
-      `Готовься — следующий полив *${fmtDate(nextDate)}*, твоя очередь, *${nextUser.name}*! 🌵`,
-      { parse_mode: 'Markdown' }
-    )
-    .catch(() => {});
+  await sendRich(
+    nextUser.chat_id,
+    `<h3>🔔 Теперь твоя очередь!</h3>` +
+    `<p><b>${esc(prevName)}</b> только что полил Макса 💧</p>` +
+    `<p>📅 Следующий полив: <b>${fmtDate(nextDate)}</b></p>` +
+    nextWateringHtml()
+  ).catch(() => {});
 }
 
 module.exports = { ensureApproved, notifyNextWaterer };

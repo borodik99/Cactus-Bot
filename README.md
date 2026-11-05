@@ -14,6 +14,7 @@
 ## ✨ Возможности
 
 🌿 **Очередь полива:**
+- Интерфейс построен на rich text кнопках (Bot API 10.1+, grammY 1.46) — inline-клавиатур нет
 - Участники вступают и выходят из очереди через кнопки
 - После каждого полива очередь автоматически ротируется
 - Текущий участник видит кнопку «Пропустить очередь»
@@ -60,7 +61,8 @@ project/
 ├── constants.js       # Настройки полива (частота, объём и др.)
 ├── helpers/
 │   ├── index.js       # Утилиты (ensureApproved, notifyNextWaterer)
-│   └── dates.js       # Часовая логика: расчёты и формат дат в Europe/Minsk
+│   ├── dates.js       # Часовая логика: расчёты и формат дат в Europe/Minsk
+│   └── rich.js        # Rich-сообщения: HTML-конструкторы и rich text кнопки
 ├── db/
 │   └── queries.js     # Все запросы к базе данных
 ├── keyboards/
@@ -207,7 +209,7 @@ npm run dev
 
 | Пакет | Назначение |
 |---|---|
-| [grammY](https://grammy.dev) | Telegram Bot framework |
+| [grammY](https://grammy.dev) | Telegram Bot framework (Bot API 10.3, rich messages) |
 | [node-postgres](https://node-postgres.com) | PostgreSQL клиент |
 | [node-cron](https://github.com/node-cron/node-cron) | Планировщик задач |
 | [dotenv](https://github.com/motdotla/dotenv) | Переменные окружения |
