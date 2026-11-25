@@ -4,6 +4,9 @@
 # Зависимости
 node_modules/
 
+# Сборка Rust
+/target
+
 # Логи
 *.log
 npm-debug.log*

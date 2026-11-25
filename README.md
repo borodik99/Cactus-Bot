@@ -2,11 +2,11 @@
 
 > Telegram-бот для управления очередью полива офисного кактуса
 
-![Node.js](https://img.shields.io/badge/node-%3E%3D18.0.0-green)
+![Rust](https://img.shields.io/badge/rust-1.100+-orange)
 ![Platform](https://img.shields.io/badge/platform-Telegram-blue)
 ![License](https://img.shields.io/badge/license-MIT-brightgreen)
 
-Больше не нужно помнить, кто последний поливал Макса.  
+Больше не нужно помнить, кто последний поливал Макса.
 Бот сам ведёт очередь, напоминает кому и когда поливать, хранит историю и позволяет пропустить очередь через запрос к админу.
 
 ---
@@ -14,7 +14,7 @@
 ## ✨ Возможности
 
 🌿 **Очередь полива:**
-- Интерфейс построен на rich text кнопках (Bot API 10.1+, grammY 1.46) — inline-клавиатур нет
+- Интерфейс построен на rich text кнопках (Bot API 10.x) через `sendRichMessage`
 - Участники вступают и выходят из очереди через кнопки
 - После каждого полива очередь автоматически ротируется
 - Текущий участник видит кнопку «Пропустить очередь»
@@ -24,9 +24,10 @@
 - Последние 10 записей доступны в меню
 
 🔔 **Автоматические напоминания:**
-- Уведомление текущему участнику в день полива (каждые 14 дней, ~10 рабочих), в 10:00 по Минску
+- Уведомление текущему участнику в день полива (каждые 14 дней), в 10:00 по Минску
 - Ежедневный повтор, если полив просрочен
 - Проверка каждые 30 минут: уведомление не теряется, даже если бот был недоступен в момент срока
+- Повторные запросы к Bot API при rate limit (`retry_after`)
 
 ⏩ **Пропуск очереди:**
 - Участник отправляет причину пропуска
@@ -39,40 +40,30 @@
 
 ---
 
-## 📸 Демо
-
-```
-📋 Очередь полива Макса:
-
-💧 Максим ← сейчас
-2. Роман
-3. Pasha
-4. Адриан
-```
-
----
-
 ## 📁 Структура проекта
 
 ```
 project/
-├── index.js           # Точка входа, запуск бота
-├── bot.js             # Инициализация бота и подключения к БД
-├── constants.js       # Настройки полива (частота, объём и др.)
-├── helpers/
-│   ├── index.js       # Утилиты (ensureApproved, notifyNextWaterer)
-│   ├── dates.js       # Часовая логика: расчёты и формат дат в Europe/Minsk
-│   └── rich.js        # Rich-сообщения: HTML-конструкторы и rich text кнопки
-├── db/
-│   └── queries.js     # Все запросы к базе данных
-├── keyboards/
-│   └── index.js       # Клавиатуры бота
-├── handlers/
-│   ├── commands.js    # /start, /menu, /help, /users, /watered
-│   ├── callbacks.js   # Обработчики inline-кнопок
-│   └── admin.js       # Одобрение/отклонение пропуска очереди
-└── cron/
-    └── index.js       # Планировщик напоминаний
+├── src/
+│   ├── main.rs             # Точка входа: env, логи, диспетчер, middleware
+│   ├── constants.rs        # Настройки полива (частота, объём и др.)
+│   ├── cron.rs             # Планировщик напоминаний (каждые 30 минут)
+│   ├── config/
+│   │   ├── env.rs          # Переменные окружения и Config
+│   │   └── logger.rs       # Логирование (tracing)
+│   ├── db/
+│   │   ├── pool.rs         # Пул соединений PostgreSQL
+│   │   └── queries.rs      # Все запросы к базе данных
+│   ├── handlers/
+│   │   ├── commands.rs     # /start, /menu, /help, /users, /watered
+│   │   ├── callbacks.rs    # Обработчики rich-кнопок
+│   │   ├── admin.rs        # Одобрения, блокировки, пропуски очереди
+│   │   └── global.rs       # Неподдерживаемые сообщения
+│   ├── helpers/
+│   │   ├── dates.rs        # Расчёты и формат дат в Europe/Minsk
+│   │   └── rich.rs         # Rich-сообщения и rich text кнопки
+│   └── keyboards.rs        # Кнопки интерфейса
+└── init.sql                # Схема базы данных
 ```
 
 ---
@@ -81,16 +72,11 @@ project/
 
 **1. Клонируй репозиторий:**
 ```bash
-git clone https://github.com/your/cactus-bot.git
-cd cactus-bot
+git clone https://github.com/suprunchuk/Cactus-Bot-Rust.git
+cd Cactus-Bot-Rust
 ```
 
-**2. Установи зависимости:**
-```bash
-npm install
-```
-
-**3. Создай `.env` из примера:**
+**2. Создай `.env` из примера:**
 ```bash
 copy .env.example .env
 ```
@@ -100,16 +86,16 @@ copy .env.example .env
 cp .env.example .env
 ```
 
-Открой `.env` и заполни значения: `BOT_API_KEY`, `ADMIN_CHAT_ID`, а также параметры БД (`POSTGRES_*` и `PGADMIN_*`, если запускаешь через `docker-compose`).
+Открой `.env` и заполни значения: `BOT_API_KEY`, `ADMIN_CHAT_ID`, а также параметры БД (`POSTGRES_*`).
 
-**4. Инициализируй базу данных:**
+**3. Инициализируй базу данных:**
 ```bash
 psql -U user -d dbname -f init.sql
 ```
 
-**5. Запусти бота:**
+**4. Запусти бота:**
 ```bash
-node index.js
+cargo run
 ```
 
 ---
@@ -152,7 +138,7 @@ docker compose up -d
 ```
 Участник поливает
        ↓
-rotateQueue() — поливший уходит в конец
+mark_watered — поливший уходит в конец очереди
        ↓
 Следующий получает уведомление
 ```
@@ -169,57 +155,46 @@ rotateQueue() — поливший уходит в конец
 **Файл конфигурации `.env`:**
 ```env
 BOT_API_KEY      # токен от @BotFather
-DATABASE_URL     # строка подключения к PostgreSQL
 ADMIN_CHAT_ID    # твой Telegram ID (узнать у @userinfobot)
+DATABASE_URL     # строка подключения к PostgreSQL
+LOG_LEVEL        # trace, debug, info, warn, error (по умолчанию: debug)
 
-# Логирование (как в pino): trace, debug, info, warn, error, fatal
-# По умолчанию: debug
-# trace/debug — максимум деталей; info/warn/error — тише
-LOG_LEVEL=debug
-
-# grammY runner: сколько апдейтов обрабатывается параллельно
-RUNNER_CONCURRENCY=10
-
-# Telegram Bot API retry: лимиты ретраев (rate limit / transient errors)
-TELEGRAM_MAX_RETRY_ATTEMPTS=3
-TELEGRAM_MAX_RETRY_DELAY_SECONDS=30
+TELEGRAM_API_URL                  # адрес Bot API (по умолчанию официальный сервер)
+TELEGRAM_MAX_RETRY_ATTEMPTS        # повторы Bot API при rate limit и сбоях сервера (по умолчанию: 3)
+TELEGRAM_MAX_RETRY_DELAY_SECONDS   # задержка повтора, если Telegram не указал retry_after
 ```
 
 ---
 
 ## 🛠️ Сборка для разработчиков
 
-Понадобится Node.js 20+ (для `node --watch`).
+Понадобится Rust 1.100+ (https://rustup.rs).
 
 ```bash
-# Клонируй репозиторий
-git clone https://github.com/your/cactus-bot.git
-cd cactus-bot
-
-# Установи зависимости
-npm install
-
-# Запусти в режиме разработки
-npm run dev
+cargo run        # запустить в режиме разработки
+cargo test       # unit-тесты
+cargo build --release   # релизная сборка
 ```
 
 ---
 
 ## 📦 Стек
 
-| Пакет | Назначение |
+| Крейт | Назначение |
 |---|---|
-| [grammY](https://grammy.dev) | Telegram Bot framework (Bot API 10.3, rich messages) |
-| [node-postgres](https://node-postgres.com) | PostgreSQL клиент |
-| [node-cron](https://github.com/node-cron/node-cron) | Планировщик задач |
-| [dotenv](https://github.com/motdotla/dotenv) | Переменные окружения |
+| [teloxide](https://github.com/teloxide/teloxide) | Telegram Bot framework |
+| [tokio-postgres](https://github.com/sfackler/rust-postgres) | PostgreSQL клиент |
+| [deadpool-postgres](https://github.com/bikeshedder/deadpool) | Пул соединений |
+| [chrono](https://github.com/chronotope/chrono) / [chrono-tz](https://github.com/chronotope/chrono-tz) | Дата и таймзоны (Europe/Minsk) |
+| [tracing](https://github.com/tokio-rs/tracing) | Логирование |
+| [reqwest](https://github.com/seanmonstar/reqwest) | HTTP-клиент для `sendRichMessage` |
 
 ---
 
 ## 🤝 Вклад в проект
 
 Нашли баг или есть идея для фичи?
-- Откройте [Issue](https://github.com/your/cactus-bot/issues)
+- Откройте [Issue](https://github.com/suprunchuk/Cactus-Bot-Rust/issues)
 - Сделайте Fork репозитория
 - Отправьте Pull Request
 

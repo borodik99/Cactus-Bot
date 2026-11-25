@@ -1,6 +1,11 @@
-FROM node:25-alpine
-WORKDIR /app
-COPY package*.json ./
-RUN npm install
-COPY . .
-CMD ["node", "index.js"]
+FROM rust:1-slim-bookworm AS build
+RUN apt-get update && apt-get install -y pkg-config libssl-dev && rm -rf /var/lib/apt/lists/*
+WORKDIR /build
+COPY Cargo.toml Cargo.lock ./
+COPY src ./src
+RUN cargo build --release
+
+FROM debian:bookworm-slim
+RUN apt-get update && apt-get install -y ca-certificates libssl3 && rm -rf /var/lib/apt/lists/*
+COPY --from=build /build/target/release/cactus_bot /usr/local/bin/cactus_bot
+ENTRYPOINT ["cactus_bot"]
